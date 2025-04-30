@@ -1,66 +1,78 @@
 # 📔 Development Journal – InStatsWeTrust
 
 ## 📅 2024-04-24
-### ✅ Zrealizowane:
-- Wprowadzenie koncepcji systematycznej analizy meczów.
-- Ustalenie formatu wejściowego danych (mecze, tabele HOME/AWAY, dominacja, xG).
-- Przygotowanie struktury funkcji `get_recent_form()` i `analyze_match()`.
+### ✅ Completed:
+- Introduced structured match analysis concept.
+- Defined input data format (matches, HOME/AWAY tables, dominance, xG).
+- Created base functions `get_recent_form()` and `analyze_match()`.
 
-### 💡 Pomysły:
-- Analiza przeciwników wg pozycji w tabeli.
-- Kolorystyczne wyróżnianie sekcji w terminalu.
+### 💡 Ideas:
+- Opponent difficulty based on league position.
+- Colored terminal output for clarity.
 
 ---
 
 ## 📅 2024-04-25
-### ✅ Zrealizowane:
-- Dodanie wyświetlania xG gospodarza i gościa na podstawie 5 ostatnich meczów.
-- Obliczanie średniej pozycji przeciwników.
-- Formatowanie wyników przeciwników.
+### ✅ Completed:
+- Added xG averages for last 5 matches for home and away teams.
+- Calculated average opponent position.
+- Displayed formatted match results.
 
-### 🐞 Naprawiono:
-- Problem z `None` przy braku danych xG.
-- Błąd w `get_recent_form()` gdy brakowało pozycji przeciwnika.
+### 🐞 Fixed:
+- Handled `None` values for missing xG.
+- Fixed missing opponent position in `get_recent_form()`.
 
 ---
 
 ## 📅 2024-04-26
-### ✅ Zrealizowane:
-- Dodanie porównania średnich pozycji przeciwników gospodarza i gościa.
-- Wyświetlanie nagłówków i podsumowań w kolorach.
-- Komentarz: kto miał trudniejszych rywali.
+### ✅ Completed:
+- Compared average opponent strength for both teams.
+- Enhanced formatting with section headers and colors.
+- Added interpretation of opponent difficulty.
 
-### 💡 Pomysły:
-- Wprowadzenie oceny formy (świetna/dobra/średnia/słaba).
+### 💡 Ideas:
+- Add form rating: great/good/average/poor.
 
 ---
 
 ## 📅 2024-04-27
-### ✅ Zrealizowane:
-- Dodanie średniego xG przeciwników.
-- Segmentacja drużyn na Top 6, 7–10, 11–14, 15–20.
-- Obliczenia bilansów W/R/P i średnich punktów w tych grupach.
+### ✅ Completed:
+- Added average xG of opponents.
+- Grouped opponents into tiers: Top 6, 7–10, 11–14, 15–20.
+- Calculated win/draw/loss records and average points per tier.
 
-### 🐞 Naprawiono:
-- Błąd z `ValueError: cannot convert float NaN to integer`.
-- Nieczytelne wyrównanie tekstu – dodano padding i kolumny.
+### 🐞 Fixed:
+- Fixed `ValueError` when converting NaN to int.
+- Improved text alignment and spacing for opponent info.
 
 ---
 
 ## 📅 2024-04-28
-### ✅ Zrealizowane:
-- Wyświetlanie formy gospodarza/gościa z nazwą drużyny i aktualną pozycją w tabeli domowej/wyjazdowej.
-- Ujednolicenie stylu: kolory, odstępy, sekcje.
-- Dziennik aktywności przeniesiony do `dev_log.md`.
+### ✅ Completed:
+- Displayed team name and current HOME/AWAY league position.
+- Cleaned up output formatting and spacing.
+- Moved dev journal entries into `dev_log.md`.
 
 ---
 
 ## 📅 2024-04-29
-### ✅ Zrealizowane:
-- Rozpoczęcie porządkowania repozytorium i plików `.py` oraz `.xlsx`.
-- Dodano README i opis repozytorium na GitHubie.
-- Wykluczenie `.venv` i dodanie `.gitignore`.
+### ✅ Completed:
+- Organized repository: renamed Python and Excel files.
+- Added README and pushed repo to GitHub.
+- Excluded `.venv` and committed `.gitignore`.
 
-### 💡 Pomysły:
-- Export analizy do pliku.
-- Stworzenie wskaźnika siły drużyny 0–100.
+### 💡 Ideas:
+- Add result export to `.txt` or `.csv`.
+
+---
+
+## 📅 2024-04-30
+### ✅ Completed:
+- Fixed issues with opponent match lists in form section.
+- Ensured proper alignment of opponent rows in match logs.
+- Improved error handling for `None` and non-dict `result` values.
+- Synced team positions with HOME or AWAY tables depending on match context.
+
+### 🐞 Fixed:
+- Prevented crash on missing data in opponent tier classification.
+- Corrected handling of float NaNs in league positions.
