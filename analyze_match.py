@@ -132,7 +132,85 @@ def get_recent_form(druzyna, typ, kolejka):
         'Przeciwnicy Info': przeciwnicy_info
     }
 
+def get_season_form_vs_opponent_tiers(druzyna, typ, kolejka):
+    """
+    Analizuje wszystkie mecze danej drużyny (home/away) rozegrane do wskazanej kolejki.
+    Dzieli wyniki względem pozycji przeciwników w tabeli w momencie danego meczu.
+    """
+    from collections import defaultdict
 
+    norm_name = normalize_team_name(druzyna)
+
+    # Filtrujemy mecze tej drużyny i typu (home/away) przed wskazaną kolejką
+    filt = (df_long['Drużyna'].apply(normalize_team_name) == norm_name) &            (df_long['Typ'] == typ) &            (df_long['Kolejka'] < kolejka)
+    mecze = df_long[filt]
+
+    if mecze.empty:
+        return {}
+
+    tabela = home_table if typ == 'home' else away_table
+    tabela['Norm'] = tabela['Drużyna'].apply(normalize_team_name)
+
+    grupy = {
+        'Top 6': (1, 6),
+        '7–10': (7, 10),
+        '11–14': (11, 14),
+        '15–20': (15, 20)
+    }
+
+    wynik = {k: {'Mecze': 0, 'Pkt': 0, 'W': 0, 'R': 0, 'P': 0, 'xG': 0.0, 'xGA': 0.0} for k in grupy}
+
+    for _, row in mecze.iterrows():
+        przeciwnik = normalize_team_name(row['Przeciwnik'])
+        runda = row['Kolejka']
+
+        # Znajdź pozycję przeciwnika z odpowiedniej tabeli z poprzedniej kolejki
+        df_tabela = tabela[(tabela['Round'] == runda) & (tabela['Norm'] == przeciwnik)]
+
+        if df_tabela.empty:
+            continue
+
+        poz_val = df_tabela.iloc[0]['Pozycja']
+        if pd.isna(poz_val):
+            continue  # pomiń mecz bez pozycji
+        pozycja = int(poz_val)
+    
+
+        # Określ grupę
+        grupa_docelowa = None
+        for nazwa, (low, high) in grupy.items():
+            if low <= pozycja <= high:
+                grupa_docelowa = nazwa
+                break
+        if grupa_docelowa is None:
+            continue
+
+        # Zbierz dane
+        wynik[grupa_docelowa]['Mecze'] += 1
+        wynik[grupa_docelowa]['Pkt'] += row.get('Punkty', 0)
+
+        pkt = row.get('Punkty', 0)
+        if pkt == 3:
+            wynik[grupa_docelowa]['W'] += 1
+        elif pkt == 1:
+            wynik[grupa_docelowa]['R'] += 1
+        else:
+            wynik[grupa_docelowa]['P'] += 1
+
+        if 'xG' in row and pd.notna(row['xG']):
+            wynik[grupa_docelowa]['xG'] += row['xG']
+        if 'xG.1' in row and pd.notna(row['xG.1']):
+            wynik[grupa_docelowa]['xGA'] += row['xG.1']
+
+    # Wylicz średnie
+    for grupa in wynik:
+        mecze = wynik[grupa]['Mecze']
+        if mecze > 0:
+            wynik[grupa]['Śr. Pkt'] = round(wynik[grupa]['Pkt'] / mecze, 2)
+            wynik[grupa]['Śr. xG'] = round(wynik[grupa]['xG'] / mecze, 2)
+            wynik[grupa]['Śr. xGA'] = round(wynik[grupa]['xGA'] / mecze, 2)
+
+    return wynik
 
 # === KROK 3: ANALIZA MECZU ===
 
@@ -212,6 +290,10 @@ if __name__ == "__main__":
     wynik = analyze_match(gospodarz, gosc, kolejka)
     fg = wynik['Forma Gospodarza']
     fgosc = wynik['Forma Gościa']
+    
+    # Statystyka vs poziom przeciwnika
+    stats_home = get_season_form_vs_opponent_tiers(gospodarz, 'home', kolejka)
+    stats_away = get_season_form_vs_opponent_tiers(gosc, 'away', kolejka) 
 
       # FORMA GOSPODARZA
     print("\n\033[94m----------------------------------------")
@@ -319,3 +401,16 @@ if __name__ == "__main__":
             print(f"Gość lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_home - xg_przeciwnicy_away, 2)} mniej straconego xG).")
         else:
             print("Obie drużyny równie dobrze ograniczają przeciwników pod względem xG.")
+
+    print("\n\033[96m========== STATYSTYKA VS. POZIOM PRZECIWNIKA ==========\033[0m")
+
+# Dla gospodarza
+    print("\nStatystyka Gospodarza:")
+    for grupa, dane in stats_home.items():
+        print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")
+
+# Dla gościa
+    print("\nStatystyka Gościa:")
+    for grupa, dane in stats_away.items():
+        print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")
+
