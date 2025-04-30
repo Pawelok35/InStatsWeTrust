@@ -290,6 +290,12 @@ if __name__ == "__main__":
     wynik = analyze_match(gospodarz, gosc, kolejka)
     fg = wynik['Forma Gospodarza']
     fgosc = wynik['Forma Gościa']
+
+    # POBIERZ POZYCJE Z TABEL
+    home_stats = get_home_stats(gospodarz, kolejka)
+    away_stats = get_latest_away_stats(gosc, kolejka)
+
+    
     
     # Statystyka vs poziom przeciwnika
     stats_home = get_season_form_vs_opponent_tiers(gospodarz, 'home', kolejka)
@@ -298,6 +304,8 @@ if __name__ == "__main__":
       # FORMA GOSPODARZA
     print("\n\033[94m----------------------------------------")
     print("FORMA GOSPODARZA:")
+    pozycja_gospodarza = home_stats.get('Pozycja') if home_stats else 'brak danych'
+    print(f"\033[94mFORMA GOSPODARZA: {gospodarz} ({pozycja_gospodarza}. miejsce w tabeli domowej)\033[0m")
     print(f"Średnia punktów: {fg.get('Śr. Punkty (5m)', 'brak danych')}")
     print(f"Średnie xG: {fg.get('Śr. xG (5m)', 'brak danych')}")
     print("Ostatnie mecze gospodarza:")
@@ -315,6 +323,9 @@ if __name__ == "__main__":
     # FORMA GOŚCIA
     print("\n\033[91m----------------------------------------")
     print("FORMA GOŚCIA:")
+    pozycja_goscia = away_stats.get('Pozycja') if away_stats else 'brak danych'
+    print(f"{gosc} ({pozycja_goscia}. miejsce w tabeli wyjazdowej)")
+  
     print(f"Średnia punktów: {fgosc.get('Śr. Punkty (5m)', 'brak danych')}")
     print(f"Średnie xG: {fgosc.get('Śr. xG (5m)', 'brak danych')}")
     print("Ostatnie mecze gościa:")
