@@ -76,3 +76,17 @@
 ### 🐞 Fixed:
 - Prevented crash on missing data in opponent tier classification.
 - Corrected handling of float NaNs in league positions.
+
+## 📅 2025-05-01
+### ✅ Completed:
+- Renamed all Polish column headers in Excel files to English equivalents (`TEAM`, `Opponent`, `Type`, `Round`, etc.).
+- Updated `update_premier_league_match_data_detailed.py` to match new column names and xG/Score logic.
+- Refactored `analyze_match.py` to fully support English naming across all data sources.
+- Fixed `KeyError` issues related to outdated column names (`TEAM`, `Position`, etc.).
+- Displayed team name and current HOME/AWAY table position in form output.
+
+### 🐞 Fixed:
+- Crash caused by mismatched column names (`Pozycja` → `Position`).
+- Misalignment between Excel sheet formats and Python expectations.
+
+---

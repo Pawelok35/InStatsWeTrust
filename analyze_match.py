@@ -15,12 +15,12 @@ def normalize_team_name(name):
 
 def get_home_stats(druzyna, kolejka):
     norm_name = normalize_team_name(druzyna)
-    home_table['Norm'] = home_table['Drużyna'].apply(normalize_team_name)
+    home_table['Norm'] = home_table['TEAM'].apply(normalize_team_name)
     df = home_table[(home_table['Round'] == kolejka - 1) & (home_table['Norm'] == norm_name)]
     if not df.empty:
         w = df.iloc[0]
         return {
-            'Pozycja': int(w['Pozycja']),
+            'Position': int(w['Position']),
             'M': int(w['M']),
             'W': int(w['W']),
             'D': int(w['D']),
@@ -33,12 +33,12 @@ def get_home_stats(druzyna, kolejka):
 
 def get_latest_away_stats(druzyna, kolejka):
     norm_name = normalize_team_name(druzyna)
-    away_table['Norm'] = away_table['Drużyna'].apply(normalize_team_name)
+    away_table['Norm'] = away_table['TEAM'].apply(normalize_team_name)
     df = away_table[(away_table['Round'] < kolejka) & (away_table['Norm'] == norm_name)]
     if not df.empty:
         w = df.sort_values(by='Round', ascending=False).iloc[0]
         return {
-            'Pozycja': int(w['Pozycja']),
+            'Position': int(w['Position']),
             'M': int(w['M']),
             'W': int(w['W']),
             'D': int(w['D']),
@@ -51,31 +51,31 @@ def get_latest_away_stats(druzyna, kolejka):
 
 def get_recent_form(druzyna, typ, kolejka):
     norm_name = normalize_team_name(druzyna)
-    filt = (df_long['Drużyna'].apply(normalize_team_name) == norm_name) & \
-           (df_long['Typ'] == typ) & \
-           (df_long['Kolejka'] < kolejka)
-    ostatnie = df_long[filt].sort_values(by='Kolejka', ascending=False).head(5)
+    filt = (df_long['TEAM'].apply(normalize_team_name) == norm_name) & \
+           (df_long['Type'] == typ) & \
+           (df_long['Round'] < kolejka)
+    ostatnie = df_long[filt].sort_values(by='Round', ascending=False).head(5)
 
     przeciwnicy_info = []
     pozycje_przeciwnikow = []
     xg_przeciwnikow = []
     tabela = home_table if typ == 'home' else away_table
-    tabela['Norm'] = tabela['Drużyna'].apply(normalize_team_name)
+    tabela['Norm'] = tabela['TEAM'].apply(normalize_team_name)
 
     for _, row in ostatnie.iterrows():
-        przeciwnik = row['Przeciwnik']
-        kolejka_rywala = row['Kolejka']
+        przeciwnik = row['Opponent']
+        kolejka_rywala = row['Round']
         norm = normalize_team_name(przeciwnik)
 
         mecz_home = df_long[
-            (df_long['Kolejka'] == kolejka_rywala) &
-            (df_long['Drużyna'].apply(normalize_team_name) == norm) &
-            (df_long['Typ'] == 'home')
+            (df_long['Round'] == kolejka_rywala) &
+            (df_long['TEAM'].apply(normalize_team_name) == norm) &
+            (df_long['Type'] == 'home')
         ]
         mecz_away = df_long[
-            (df_long['Kolejka'] == kolejka_rywala) &
-            (df_long['Drużyna'].apply(normalize_team_name) == norm) &
-            (df_long['Typ'] == 'away')
+            (df_long['Round'] == kolejka_rywala) &
+            (df_long['TEAM'].apply(normalize_team_name) == norm) &
+            (df_long['Type'] == 'away')
         ]
 
         if not mecz_home.empty:
@@ -87,7 +87,7 @@ def get_recent_form(druzyna, typ, kolejka):
             continue
 
         tabela_przeciwnika = home_table if typ_przeciwnika == 'home' else away_table
-        tabela_przeciwnika['Norm'] = tabela_przeciwnika['Drużyna'].apply(normalize_team_name)
+        tabela_przeciwnika['Norm'] = tabela_przeciwnika['TEAM'].apply(normalize_team_name)
         df_pos = tabela_przeciwnika[
             (tabela_przeciwnika['Round'] == kolejka_rywala) &
             (tabela_przeciwnika['Norm'] == norm)
@@ -96,7 +96,7 @@ def get_recent_form(druzyna, typ, kolejka):
         if df_pos.empty:
             pozycja = None
         else:
-            poz_val = df_pos.iloc[0]['Pozycja']
+            poz_val = df_pos.iloc[0]['Position']
             pozycja = int(poz_val) if pd.notna(poz_val) else None
 
         if pozycja is not None:
@@ -104,7 +104,7 @@ def get_recent_form(druzyna, typ, kolejka):
 
         # Wynik meczu
         wynik_meczu = row.get('Score') if 'Score' in row else 'brak wyniku'
-        punkty = row.get('Punkty', 0)
+        punkty = row.get('Points', 0)
         if punkty == 3:
             rezultat = "Wygrana"
         elif punkty == 1:
@@ -115,11 +115,11 @@ def get_recent_form(druzyna, typ, kolejka):
         przeciwnicy_info.append(f"{przeciwnik} ({pozycja if pozycja is not None else 'brak'}) | Wynik: {wynik_meczu} | {rezultat}")
 
         # xG przeciwnika
-        xg_przeciwnika = row.get('xG.1') if typ == 'home' else row.get('xG')
+        xg_przeciwnika = row.get('xG_Opponent') if typ == 'home' else row.get('xG')
         if pd.notna(xg_przeciwnika):
             xg_przeciwnikow.append(xg_przeciwnika)
 
-    sr_pkt = round(float(ostatnie['Punkty'].mean()), 2) if not ostatnie.empty else None
+    sr_pkt = round(float(ostatnie['Points'].mean()), 2) if not ostatnie.empty else None
     sr_xg = round(ostatnie['xG'].mean(), 2) if not ostatnie.empty and 'xG' in ostatnie.columns else None
     sr_pozycja = round(sum(pozycje_przeciwnikow) / len(pozycje_przeciwnikow), 2) if pozycje_przeciwnikow else None
     sr_xg_przeciwnikow = round(sum(xg_przeciwnikow) / len(xg_przeciwnikow), 2) if xg_przeciwnikow else None
@@ -132,85 +132,7 @@ def get_recent_form(druzyna, typ, kolejka):
         'Przeciwnicy Info': przeciwnicy_info
     }
 
-def get_season_form_vs_opponent_tiers(druzyna, typ, kolejka):
-    """
-    Analizuje wszystkie mecze danej drużyny (home/away) rozegrane do wskazanej kolejki.
-    Dzieli wyniki względem pozycji przeciwników w tabeli w momencie danego meczu.
-    """
-    from collections import defaultdict
 
-    norm_name = normalize_team_name(druzyna)
-
-    # Filtrujemy mecze tej drużyny i typu (home/away) przed wskazaną kolejką
-    filt = (df_long['Drużyna'].apply(normalize_team_name) == norm_name) &            (df_long['Typ'] == typ) &            (df_long['Kolejka'] < kolejka)
-    mecze = df_long[filt]
-
-    if mecze.empty:
-        return {}
-
-    tabela = home_table if typ == 'home' else away_table
-    tabela['Norm'] = tabela['Drużyna'].apply(normalize_team_name)
-
-    grupy = {
-        'Top 6': (1, 6),
-        '7–10': (7, 10),
-        '11–14': (11, 14),
-        '15–20': (15, 20)
-    }
-
-    wynik = {k: {'Mecze': 0, 'Pkt': 0, 'W': 0, 'R': 0, 'P': 0, 'xG': 0.0, 'xGA': 0.0} for k in grupy}
-
-    for _, row in mecze.iterrows():
-        przeciwnik = normalize_team_name(row['Przeciwnik'])
-        runda = row['Kolejka']
-
-        # Znajdź pozycję przeciwnika z odpowiedniej tabeli z poprzedniej kolejki
-        df_tabela = tabela[(tabela['Round'] == runda) & (tabela['Norm'] == przeciwnik)]
-
-        if df_tabela.empty:
-            continue
-
-        poz_val = df_tabela.iloc[0]['Pozycja']
-        if pd.isna(poz_val):
-            continue  # pomiń mecz bez pozycji
-        pozycja = int(poz_val)
-    
-
-        # Określ grupę
-        grupa_docelowa = None
-        for nazwa, (low, high) in grupy.items():
-            if low <= pozycja <= high:
-                grupa_docelowa = nazwa
-                break
-        if grupa_docelowa is None:
-            continue
-
-        # Zbierz dane
-        wynik[grupa_docelowa]['Mecze'] += 1
-        wynik[grupa_docelowa]['Pkt'] += row.get('Punkty', 0)
-
-        pkt = row.get('Punkty', 0)
-        if pkt == 3:
-            wynik[grupa_docelowa]['W'] += 1
-        elif pkt == 1:
-            wynik[grupa_docelowa]['R'] += 1
-        else:
-            wynik[grupa_docelowa]['P'] += 1
-
-        if 'xG' in row and pd.notna(row['xG']):
-            wynik[grupa_docelowa]['xG'] += row['xG']
-        if 'xG.1' in row and pd.notna(row['xG.1']):
-            wynik[grupa_docelowa]['xGA'] += row['xG.1']
-
-    # Wylicz średnie
-    for grupa in wynik:
-        mecze = wynik[grupa]['Mecze']
-        if mecze > 0:
-            wynik[grupa]['Śr. Pkt'] = round(wynik[grupa]['Pkt'] / mecze, 2)
-            wynik[grupa]['Śr. xG'] = round(wynik[grupa]['xG'] / mecze, 2)
-            wynik[grupa]['Śr. xGA'] = round(wynik[grupa]['xGA'] / mecze, 2)
-
-    return wynik
 
 # === KROK 3: ANALIZA MECZU ===
 
@@ -221,17 +143,19 @@ def analyze_match(gospodarz, gosc, kolejka):
     away_stats = get_latest_away_stats(gosc, kolejka)
     df_match = df_matches[(df_matches['Round'] == kolejka) & (df_matches['Home'] == gospodarz) & (df_matches['Away'] == gosc)]
     xg_home = float(df_match['xG'].values[0]) if not df_match.empty and 'xG' in df_match.columns else None
-    xg_away = float(df_match['xG.1'].values[0]) if not df_match.empty and 'xG.1' in df_match.columns else None
+    xg_away = float(df_match['xG_Opponent'].values[0]) if not df_match.empty and 'xG_Opponent' in df_match.columns else None
     wynik_meczu = str(df_match['Score'].values[0]) if not df_match.empty else None
     return {
         'Gospodarz': gospodarz,
         'Gość': gosc,
-        'Kolejka': kolejka,
+        'Round': kolejka,
         'Forma Gospodarza': home_form,
         'Forma Gościa': away_form,
         'xG Gospodarz': xg_home,
         'xG Gość': xg_away,
-        'Wynik meczu': wynik_meczu
+        'Wynik meczu': wynik_meczu,
+        'HomeStats': home_stats,
+        'AwayStats': away_stats
     }
 
 # === KROK 4: URUCHOMIENIE ANALIZY ===
@@ -291,21 +215,13 @@ if __name__ == "__main__":
     fg = wynik['Forma Gospodarza']
     fgosc = wynik['Forma Gościa']
 
-    # POBIERZ POZYCJE Z TABEL
-    home_stats = get_home_stats(gospodarz, kolejka)
-    away_stats = get_latest_away_stats(gosc, kolejka)
-
-    
-    
-    # Statystyka vs poziom przeciwnika
-    stats_home = get_season_form_vs_opponent_tiers(gospodarz, 'home', kolejka)
-    stats_away = get_season_form_vs_opponent_tiers(gosc, 'away', kolejka) 
-
       # FORMA GOSPODARZA
     print("\n\033[94m----------------------------------------")
-    print("FORMA GOSPODARZA:")
-    pozycja_gospodarza = home_stats.get('Pozycja') if home_stats else 'brak danych'
-    print(f"\033[94mFORMA GOSPODARZA: {gospodarz} ({pozycja_gospodarza}. miejsce w tabeli domowej)\033[0m")
+    print(f"FORMA GOSPODARZA: {gospodarz.upper()}")
+    if wynik.get("Forma Gospodarza") and wynik.get("Forma Gospodarza") != "brak danych":
+        pos = wynik.get("HomeStats", {}).get("Position")
+        if pos is not None:
+            print(f"Pozycja w tabeli domowej (przed kolejką): {pos}")
     print(f"Średnia punktów: {fg.get('Śr. Punkty (5m)', 'brak danych')}")
     print(f"Średnie xG: {fg.get('Śr. xG (5m)', 'brak danych')}")
     print("Ostatnie mecze gospodarza:")
@@ -322,10 +238,11 @@ if __name__ == "__main__":
 
     # FORMA GOŚCIA
     print("\n\033[91m----------------------------------------")
-    print("FORMA GOŚCIA:")
-    pozycja_goscia = away_stats.get('Pozycja') if away_stats else 'brak danych'
-    print(f"{gosc} ({pozycja_goscia}. miejsce w tabeli wyjazdowej)")
-  
+    print(f"FORMA GOŚCIA: {gosc.upper()}")
+    if wynik.get("Forma Gościa") and wynik.get("Forma Gościa") != "brak danych":
+        pos = wynik.get("AwayStats", {}).get("Position")
+        if pos is not None:
+            print(f"Pozycja w tabeli wyjazdowej (przed kolejką): {pos}")
     print(f"Średnia punktów: {fgosc.get('Śr. Punkty (5m)', 'brak danych')}")
     print(f"Średnie xG: {fgosc.get('Śr. xG (5m)', 'brak danych')}")
     print("Ostatnie mecze gościa:")
@@ -412,16 +329,3 @@ if __name__ == "__main__":
             print(f"Gość lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_home - xg_przeciwnicy_away, 2)} mniej straconego xG).")
         else:
             print("Obie drużyny równie dobrze ograniczają przeciwników pod względem xG.")
-
-    print("\n\033[96m========== STATYSTYKA VS. POZIOM PRZECIWNIKA ==========\033[0m")
-
-# Dla gospodarza
-    print("\nStatystyka Gospodarza:")
-    for grupa, dane in stats_home.items():
-        print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")
-
-# Dla gościa
-    print("\nStatystyka Gościa:")
-    for grupa, dane in stats_away.items():
-        print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")
-
