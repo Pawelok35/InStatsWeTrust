@@ -1,3 +1,14 @@
 .venv/
 __pycache__/
 *.pyc
+# Excel backup files
+~$*
+
+# VS Code config (jeśli nie chcesz go dzielić z innymi)
+.vscode/
+
+# Pliki tymczasowe systemu
+*.log
+.DS_Store
+Thumbs.db
+
