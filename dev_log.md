@@ -90,3 +90,19 @@
 - Misalignment between Excel sheet formats and Python expectations.
 
 ---
+
+## 📅 2025-05-02
+
+### ✅ Completed:
+- Fully refactored `analyze_match.py` to align with the new English column naming convention (`Points`, `xG`, `Score`, `Opponent`, etc.).
+- Rewrote the `get_recent_form`, `analyze_match`, and match output sections to support English-based data structures.
+- Confirmed that reversed match score logic is applied correctly for away teams.
+- Ensured consistency between detailed match data and team tables (`HomeTable` / `AwayTable`).
+- Modularized summary statistics: avg points, avg xG, and opponent positions/xG.
+
+### 🐞 Fixed:
+- Missing data in match analysis summary (average points, opponent data) caused by outdated Polish keys (`Śr. Punkty (5m)`, `Pozycja`, etc.).
+- Corrected logic to retrieve and display xG values for both teams and their opponents across last 5 matches.
+- Resolved inconsistencies between match type references (`home`, `away`) and team normalization.
+
+---
