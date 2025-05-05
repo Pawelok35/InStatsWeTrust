@@ -106,3 +106,24 @@
 - Resolved inconsistencies between match type references (`home`, `away`) and team normalization.
 
 ---
+
+## 📅 2025-05-05
+
+### ✅ Completed:
+- Fully integrated and synchronized match data across `match_data_detailed.xlsx`, `team_tables_home_away.xlsx`, and `raw_match_data.xlsx`.
+- Refactored the `get_recent_form()` function to reliably calculate:
+  - average points and xG over the last 5 matches,
+  - average opponent positions,
+  - average xG of opponents.
+- Improved logic for identifying opponent match type (`home`/`away`) to ensure accurate data retrieval.
+- Applied green ANSI color highlighting for `"Statystyka Gospodarza"` and `"Statystyka Gościa"` headers in the console output.
+- Verified that the entire match analysis works correctly across all 34 matchdays and for all 20 teams.
+
+### 🐞 Fixed:
+- Fixed missing data in summaries (opponent xG and position) caused by incomplete filtering or lack of name normalization.
+- Replaced `None`/`NaN` outputs with actual numerical values when data is available.
+- Reactivated and correctly used `home_stats` and `away_stats` to display table positions.
+- Simplified and unified match summary logic and final output structure.
+
+---
+

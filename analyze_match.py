@@ -51,14 +51,17 @@ def get_latest_away_stats(druzyna, kolejka):
 
 def get_recent_form(druzyna, typ, kolejka):
     norm_name = normalize_team_name(druzyna)
+
     filt = (df_long['TEAM'].apply(normalize_team_name) == norm_name) & \
-           (df_long['Type'] == typ) & \
+           (df_long['Type'].str.lower() == typ.lower()) & \
            (df_long['Round'] < kolejka)
+
     ostatnie = df_long[filt].sort_values(by='Round', ascending=False).head(5)
 
     przeciwnicy_info = []
     pozycje_przeciwnikow = []
     xg_przeciwnikow = []
+
     tabela = home_table if typ == 'home' else away_table
     tabela['Norm'] = tabela['TEAM'].apply(normalize_team_name)
 
@@ -67,57 +70,48 @@ def get_recent_form(druzyna, typ, kolejka):
         kolejka_rywala = row['Round']
         norm = normalize_team_name(przeciwnik)
 
-        mecz_home = df_long[
-            (df_long['Round'] == kolejka_rywala) &
-            (df_long['TEAM'].apply(normalize_team_name) == norm) &
-            (df_long['Type'] == 'home')
-        ]
-        mecz_away = df_long[
-            (df_long['Round'] == kolejka_rywala) &
-            (df_long['TEAM'].apply(normalize_team_name) == norm) &
-            (df_long['Type'] == 'away')
-        ]
+        # Szukamy pozycji przeciwnika w jego ostatnim meczu (home/away)
+        tabela_home = home_table.copy()
+        tabela_away = away_table.copy()
+        tabela_home['Norm'] = tabela_home['TEAM'].apply(normalize_team_name)
+        tabela_away['Norm'] = tabela_away['TEAM'].apply(normalize_team_name)
 
-        if not mecz_home.empty:
-            typ_przeciwnika = 'home'
-        elif not mecz_away.empty:
-            typ_przeciwnika = 'away'
+        tabela_mecz = pd.concat([
+            tabela_home[(tabela_home['Round'] == kolejka_rywala) & (tabela_home['Norm'] == norm)],
+            tabela_away[(tabela_away['Round'] == kolejka_rywala) & (tabela_away['Norm'] == norm)]
+        ])
+
+        if not tabela_mecz.empty:
+            pozycja = tabela_mecz.iloc[0]['Position']
+            if pd.notna(pozycja):
+                pozycje_przeciwnikow.append(int(pozycja))
         else:
-            przeciwnicy_info.append(f"{przeciwnik} (brak danych) | Wynik: brak danych | brak danych")
-            continue
+            pozycja = 'brak'
 
-        tabela_przeciwnika = home_table if typ_przeciwnika == 'home' else away_table
-        tabela_przeciwnika['Norm'] = tabela_przeciwnika['TEAM'].apply(normalize_team_name)
-        df_pos = tabela_przeciwnika[
-            (tabela_przeciwnika['Round'] == kolejka_rywala) &
-            (tabela_przeciwnika['Norm'] == norm)
-        ]
-
-        if df_pos.empty:
-            pozycja = None
-        else:
-            poz_val = df_pos.iloc[0]['Position']
-            pozycja = int(poz_val) if pd.notna(poz_val) else None
-
-        if pozycja is not None:
-            pozycje_przeciwnikow.append(pozycja)
-
-        # Wynik meczu
+        # Wynik meczu i punktacja
         wynik_meczu = row.get('Score') if 'Score' in row else 'brak wyniku'
         punkty = row.get('Points', 0)
-        if punkty == 3:
-            rezultat = "Wygrana"
-        elif punkty == 1:
-            rezultat = "Remis"
-        else:
-            rezultat = "Przegrana"
+        rezultat = "Wygrana" if punkty == 3 else "Remis" if punkty == 1 else "Przegrana"
+        przeciwnicy_info.append(f"{przeciwnik} ({pozycja}) | Wynik: {wynik_meczu} | {rezultat}")
 
-        przeciwnicy_info.append(f"{przeciwnik} ({pozycja if pozycja is not None else 'brak'}) | Wynik: {wynik_meczu} | {rezultat}")
+        # xG przeciwnika z df_long
+        opp_norm = normalize_team_name(przeciwnik)
+        opp_typ = 'home' if typ == 'away' else 'away'
+        opp_match = df_long[
+            (df_long['TEAM'].apply(normalize_team_name) == opp_norm) &
+            (df_long['Round'] == kolejka_rywala) &
+            (df_long['Type'].str.lower() == opp_typ)
+        ]
 
-        # xG przeciwnika
-        xg_przeciwnika = row.get('xG_Opponent') if typ == 'home' else row.get('xG')
-        if pd.notna(xg_przeciwnika):
-            xg_przeciwnikow.append(xg_przeciwnika)
+        xg_val = None
+        if not opp_match.empty:
+            if opp_typ == 'home':
+                xg_val = opp_match.iloc[0].get('xG')
+            else:
+                xg_val = opp_match.iloc[0].get('xG_Opponent')
+
+        if pd.notna(xg_val):
+            xg_przeciwnikow.append(xg_val)
 
     sr_pkt = round(float(ostatnie['Points'].mean()), 2) if not ostatnie.empty else None
     sr_xg = round(ostatnie['xG'].mean(), 2) if not ostatnie.empty and 'xG' in ostatnie.columns else None
@@ -134,6 +128,125 @@ def get_recent_form(druzyna, typ, kolejka):
 
 
 
+def get_average_opponent_position(mecze, team_tables_path, typ):
+    import pandas as pd
+
+    # Wczytaj plik z tabelami
+    xls = pd.ExcelFile(team_tables_path)
+    home_table = xls.parse(xls.sheet_names[0])
+    away_table = xls.parse(xls.sheet_names[1])
+
+    przeciwnicy = []
+
+    for _, row in mecze.iterrows():
+        round_nr = int(row['Round']) - 1  # patrzymy na poprzednią kolejkę
+        opponent = row['Opponent']
+
+        if typ.lower() == 'home':
+            table = away_table
+        else:
+            table = home_table
+
+        team_row = table[(table['Round'] == round_nr) & (table['TEAM'].str.strip() == opponent.strip())]
+
+        if not team_row.empty:
+            pos = team_row.iloc[0]['Position']
+            try:
+                pos = int(pos)
+                przeciwnicy.append(pos)
+            except:
+                continue
+
+    if przeciwnicy:
+        return round(sum(przeciwnicy) / len(przeciwnicy), 2)
+    else:
+        return None
+
+
+def get_season_form_vs_opponent_tiers(druzyna, typ, kolejka):
+    """
+    Analizuje wszystkie mecze danej drużyny (home/away) rozegrane do wskazanej kolejki.
+    Dzieli wyniki względem pozycji przeciwników w tabeli w momencie danego meczu.
+    """
+    from collections import defaultdict
+
+    norm_name = normalize_team_name(druzyna)
+
+    # Filtrujemy mecze tej drużyny i typu (home/away) przed wskazaną kolejką
+    filt = (
+    (df_long['TEAM'].apply(normalize_team_name) == norm_name) &
+    (df_long['Type'].str.lower() == typ.lower()) &
+    (df_long['Round'] < kolejka)
+    )
+    mecze = df_long[filt]
+
+    if mecze.empty:
+        return {}
+
+    tabela = home_table if typ == 'home' else away_table
+    tabela['Norm'] = tabela['TEAM'].apply(normalize_team_name)
+
+    grupy = {
+        'Top 6': (1, 6),
+        '7–10': (7, 10),
+        '11–14': (11, 14),
+        '15–20': (15, 20)
+    }
+
+    wynik = {k: {'Mecze': 0, 'Pkt': 0, 'W': 0, 'R': 0, 'P': 0, 'xG': 0.0, 'xGA': 0.0} for k in grupy}
+
+    for _, row in mecze.iterrows():
+        przeciwnik = normalize_team_name(row['Opponent'])
+        runda = row['Round']
+
+        # Znajdź pozycję przeciwnika z odpowiedniej tabeli z poprzedniej kolejki
+        df_tabela = tabela[(tabela['Round'] == runda) & (tabela['Norm'] == przeciwnik)]
+
+        if df_tabela.empty:
+            continue
+
+        poz_val = df_tabela.iloc[0]['Position']
+        if pd.isna(poz_val):
+            continue  # pomiń mecz bez pozycji
+        pozycja = int(poz_val)
+
+
+        # Określ grupę
+        grupa_docelowa = None
+        for nazwa, (low, high) in grupy.items():
+            if low <= pozycja <= high:
+                grupa_docelowa = nazwa
+                break
+        if grupa_docelowa is None:
+            continue
+
+        # Zbierz dane
+        wynik[grupa_docelowa]['Mecze'] += 1
+        wynik[grupa_docelowa]['Pkt'] += row.get('Points', 0)
+
+        pkt = row.get('Points', 0)
+        if pkt == 3:
+            wynik[grupa_docelowa]['W'] += 1
+        elif pkt == 1:
+            wynik[grupa_docelowa]['R'] += 1
+        else:
+            wynik[grupa_docelowa]['P'] += 1
+
+        if 'xG' in row and pd.notna(row['xG']):
+            wynik[grupa_docelowa]['xG'] += row['xG']
+        if 'xG_Opponent' in row and pd.notna(row['xG_Opponent']):
+            wynik[grupa_docelowa]['xGA'] += row['xG_Opponent']
+
+    # Wylicz średnie
+    for grupa in wynik:
+        mecze = wynik[grupa]['Mecze']
+        if mecze > 0:
+            wynik[grupa]['Śr. Pkt'] = round(wynik[grupa]['Pkt'] / mecze, 2)
+            wynik[grupa]['Śr. xG'] = round(wynik[grupa]['xG'] / mecze, 2)
+            wynik[grupa]['Śr. xGA'] = round(wynik[grupa]['xGA'] / mecze, 2)
+
+    return wynik
+
 # === KROK 3: ANALIZA MECZU ===
 
 def analyze_match(gospodarz, gosc, kolejka):
@@ -141,10 +254,13 @@ def analyze_match(gospodarz, gosc, kolejka):
     away_form = get_recent_form(gosc, 'away', kolejka)
     home_stats = get_home_stats(gospodarz, kolejka)
     away_stats = get_latest_away_stats(gosc, kolejka)
-    df_match = df_matches[(df_matches['Round'] == kolejka) & (df_matches['Home'] == gospodarz) & (df_matches['Away'] == gosc)]
+    df_match = df_matches[(df_matches['Round'] == kolejka) &
+                          (df_matches['Home'] == gospodarz) &
+                          (df_matches['Away'] == gosc)]
     xg_home = float(df_match['xG'].values[0]) if not df_match.empty and 'xG' in df_match.columns else None
     xg_away = float(df_match['xG_Opponent'].values[0]) if not df_match.empty and 'xG_Opponent' in df_match.columns else None
     wynik_meczu = str(df_match['Score'].values[0]) if not df_match.empty else None
+
     return {
         'Gospodarz': gospodarz,
         'Gość': gosc,
@@ -154,8 +270,8 @@ def analyze_match(gospodarz, gosc, kolejka):
         'xG Gospodarz': xg_home,
         'xG Gość': xg_away,
         'Wynik meczu': wynik_meczu,
-        'HomeStats': home_stats,
-        'AwayStats': away_stats
+        'Statystyki Gospodarza': home_stats,
+        'Statystyki Gościa': away_stats
     }
 
 # === KROK 4: URUCHOMIENIE ANALIZY ===
@@ -215,13 +331,21 @@ if __name__ == "__main__":
     fg = wynik['Forma Gospodarza']
     fgosc = wynik['Forma Gościa']
 
+    # POBIERZ POZYCJE Z TABEL
+    home_stats = get_home_stats(gospodarz, kolejka)
+    away_stats = get_latest_away_stats(gosc, kolejka)
+
+    
+
+    # Statystyka vs poziom przeciwnika
+    stats_home = get_season_form_vs_opponent_tiers(gospodarz, 'home', kolejka)
+    stats_away = get_season_form_vs_opponent_tiers(gosc, 'away', kolejka) 
+
       # FORMA GOSPODARZA
     print("\n\033[94m----------------------------------------")
-    print(f"FORMA GOSPODARZA: {gospodarz.upper()}")
-    if wynik.get("Forma Gospodarza") and wynik.get("Forma Gospodarza") != "brak danych":
-        pos = wynik.get("HomeStats", {}).get("Position")
-        if pos is not None:
-            print(f"Pozycja w tabeli domowej (przed kolejką): {pos}")
+    print("FORMA GOSPODARZA:")
+    pozycja_gospodarza = home_stats.get('Position') if home_stats else 'brak danych'
+    print(f"\033[94mFORMA GOSPODARZA: {gospodarz} ({pozycja_gospodarza}. miejsce w tabeli domowej)\033[0m")
     print(f"Średnia punktów: {fg.get('Śr. Punkty (5m)', 'brak danych')}")
     print(f"Średnie xG: {fg.get('Śr. xG (5m)', 'brak danych')}")
     print("Ostatnie mecze gospodarza:")
@@ -238,11 +362,10 @@ if __name__ == "__main__":
 
     # FORMA GOŚCIA
     print("\n\033[91m----------------------------------------")
-    print(f"FORMA GOŚCIA: {gosc.upper()}")
-    if wynik.get("Forma Gościa") and wynik.get("Forma Gościa") != "brak danych":
-        pos = wynik.get("AwayStats", {}).get("Position")
-        if pos is not None:
-            print(f"Pozycja w tabeli wyjazdowej (przed kolejką): {pos}")
+    print("FORMA GOŚCIA:")
+    pozycja_goscia = away_stats.get('Position') if away_stats else 'brak danych'
+    print(f"{gosc} ({pozycja_goscia}. miejsce w tabeli wyjazdowej)")
+  
     print(f"Średnia punktów: {fgosc.get('Śr. Punkty (5m)', 'brak danych')}")
     print(f"Średnie xG: {fgosc.get('Śr. xG (5m)', 'brak danych')}")
     print("Ostatnie mecze gościa:")
@@ -257,75 +380,96 @@ if __name__ == "__main__":
             print(f"- {przeciwnik_info}")
     print("\033[0m")
 
-    # === PODSUMOWANIE ===
-    print("\n\033[93m========== PODSUMOWANIE ==========\033[0m")
+  # === PODSUMOWANIE ===
+print("\n\033[93m========== PODSUMOWANIE ==========\033[0m")
 
-    sr_pkt_home = fg.get('Śr. Punkty (5m)')
-    sr_pkt_away = fgosc.get('Śr. Punkty (5m)')
-    roznica_pkt = None
-    faworyt_text = ""
-    if sr_pkt_home is not None and sr_pkt_away is not None:
-        roznica_pkt = round(sr_pkt_home - sr_pkt_away, 2)
-        if roznica_pkt > 0:
-            faworyt_text = f"RÓŻNICA NA KORZYŚĆ GOSPODARZA WYNOSI {roznica_pkt}"
-        elif roznica_pkt < 0:
-            faworyt_text = f"RÓŻNICA NA KORZYŚĆ GOŚCIA WYNOSI {abs(roznica_pkt)}"
-        else:
-            faworyt_text = "BRAK RÓŻNICY MIĘDZY GOSPODARZEM A GOŚCIEM."
+sr_pkt_home = fg.get('Śr. Punkty (5m)')
+sr_pkt_away = fgosc.get('Śr. Punkty (5m)')
+roznica_pkt = None
+faworyt_text = ""
 
-    print(f"Śr. punkty Gospodarza (dom): {sr_pkt_home if sr_pkt_home is not None else 'brak danych'}")
-    print(f"Śr. punkty Gościa (wyjazd): {sr_pkt_away if sr_pkt_away is not None else 'brak danych'}\n")
-    print(f"\033[1m{faworyt_text}\033[0m\n")
-
-    print(f"Średnie xG Gospodarza (z 5 meczy): {fg.get('Śr. xG (5m)', 'brak danych')}")
-    print(f"Średnie xG przeciwników Gospodarza (z 5 meczy): {fg.get('Śr. xG Przeciwników (5m)', 'brak danych')}\n")
-    print(f"Średnie xG Gościa (z 5 meczy): {fgosc.get('Śr. xG (5m)', 'brak danych')}")
-    print(f"Średnie xG przeciwników Gościa (z 5 meczy): {fgosc.get('Śr. xG Przeciwników (5m)', 'brak danych')}\n")
-    print(f"Średnia pozycja przeciwników Gospodarza: {fg.get('Śr. Pozycja Przeciwników (5m)', 'brak danych')}")
-    print(f"Średnia pozycja przeciwników Gościa: {fgosc.get('Śr. Pozycja Przeciwników (5m)', 'brak danych')}\n")
-    if isinstance(wynik, dict):
-        print(f"Wynik meczu: {wynik.get('Wynik meczu', 'brak danych')}")
+if sr_pkt_home is not None and sr_pkt_away is not None:
+    roznica_pkt = round(sr_pkt_home - sr_pkt_away, 2)
+    if roznica_pkt > 0:
+        faworyt_text = f"RÓŻNICA NA KORZYŚĆ GOSPODARZA WYNOSI {roznica_pkt}"
+    elif roznica_pkt < 0:
+        faworyt_text = f"RÓŻNICA NA KORZYŚĆ GOŚCIA WYNOSI {abs(roznica_pkt)}"
     else:
-        print(f"Błąd: zmienna 'wynik' nie jest słownikiem, tylko: {type(wynik)}")
+        faworyt_text = "BRAK RÓŻNICY MIĘDZY GOSPODARZEM A GOŚCIEM."
+
+print(f"Śr. punkty Gospodarza (dom): {sr_pkt_home if sr_pkt_home is not None else 'brak danych'}")
+print(f"Śr. punkty Gościa (wyjazd): {sr_pkt_away if sr_pkt_away is not None else 'brak danych'}\n")
+print(f"\033[1m{faworyt_text}\033[0m\n")
+
+print(f"Średnie xG Gospodarza (z 5 meczy): {fg.get('Śr. xG (5m)', 'brak danych')}")
+print(f"Średnie xG przeciwników Gospodarza (z 5 meczy): {fg.get('Śr. xG Przeciwników (5m)', 'brak danych')}\n")
+print(f"Średnie xG Gościa (z 5 meczy): {fgosc.get('Śr. xG (5m)', 'brak danych')}")
+print(f"Średnie xG przeciwników Gościa (z 5 meczy): {fgosc.get('Śr. xG Przeciwników (5m)', 'brak danych')}\n")
+
+print(f"Średnia pozycja przeciwników Gospodarza: {fg.get('Śr. Pozycja Przeciwników (5m)', 'brak danych')}")
+print(f"Średnia pozycja przeciwników Gościa: {fgosc.get('Śr. Pozycja Przeciwników (5m)', 'brak danych')}\n")
+
+if isinstance(wynik, dict):
+    print(f"Wynik meczu: {wynik.get('Wynik meczu', 'brak danych')}")
+else:
+    print(f"Błąd: zmienna 'wynik' nie jest słownikiem, tylko: {type(wynik)}")
 
 
-    # === DODATKOWE WNIOSKI ===
-    print("\n\033[92m========== DODATKOWE WNIOSKI ==========\033[0m")
 
-    def ocena_formy(srednia_punktow):
-        if srednia_punktow is None:
-            return "Brak danych"
-        elif srednia_punktow > 2.0:
-            return "Świetna forma"
-        elif srednia_punktow > 1.5:
-            return "Dobra forma"
-        elif srednia_punktow > 1.0:
-            return "Średnia forma"
-        else:
-            return "Słaba forma"
 
-    forma_gospodarza = ocena_formy(sr_pkt_home)
-    forma_goscia = ocena_formy(sr_pkt_away)
-    print(f"Forma Gospodarza: {forma_gospodarza}")
-    print(f"Forma Gościa: {forma_goscia}\n")
+   # === DODATKOWE WNIOSKI ===
+print("\n\033[92m========== DODATKOWE WNIOSKI ==========\033[0m")
 
-    xg_home = fg.get('Śr. xG (5m)')
-    xg_away = fgosc.get('Śr. xG (5m)')
-    xg_przeciwnicy_home = fg.get('Śr. xG Przeciwników (5m)')
-    xg_przeciwnicy_away = fgosc.get('Śr. xG Przeciwników (5m)')
+def ocena_formy(srednia_punktow):
+    if srednia_punktow is None:
+        return "Brak danych"
+    elif srednia_punktow > 2.0:
+        return "Świetna forma"
+    elif srednia_punktow > 1.5:
+        return "Dobra forma"
+    elif srednia_punktow > 1.0:
+        return "Średnia forma"
+    else:
+        return "Słaba forma"
 
-    if xg_home is not None and xg_away is not None:
-        if xg_home > xg_away:
-            print(f"Gospodarz generuje więcej xG (średnio {round(xg_home - xg_away, 2)} więcej).")
-        elif xg_home < xg_away:
-            print(f"Gość generuje więcej xG (średnio {round(xg_away - xg_home, 2)} więcej).")
-        else:
-            print("Obie drużyny generują podobne xG.")
+forma_gospodarza = ocena_formy(sr_pkt_home)
+forma_goscia = ocena_formy(sr_pkt_away)
 
-    if xg_przeciwnicy_home is not None and xg_przeciwnicy_away is not None:
-        if xg_przeciwnicy_home < xg_przeciwnicy_away:
-            print(f"Gospodarz lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_away - xg_przeciwnicy_home, 2)} mniej straconego xG).")
-        elif xg_przeciwnicy_home > xg_przeciwnicy_away:
-            print(f"Gość lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_home - xg_przeciwnicy_away, 2)} mniej straconego xG).")
-        else:
-            print("Obie drużyny równie dobrze ograniczają przeciwników pod względem xG.")
+print(f"Forma Gospodarza: {forma_gospodarza}")
+print(f"Forma Gościa: {forma_goscia}\n")
+
+xg_home = fg.get('Śr. xG (5m)')
+xg_away = fgosc.get('Śr. xG (5m)')
+xg_przeciwnicy_home = fg.get('Śr. xG Przeciwników (5m)')
+xg_przeciwnicy_away = fgosc.get('Śr. xG Przeciwników (5m)')
+
+# Porównanie xG generowanego
+if xg_home is not None and xg_away is not None:
+    if xg_home > xg_away:
+        print(f"Gospodarz generuje więcej xG (średnio {round(xg_home - xg_away, 2)} więcej).")
+    elif xg_home < xg_away:
+        print(f"Gość generuje więcej xG (średnio {round(xg_away - xg_home, 2)} więcej).")
+    else:
+        print("Obie drużyny generują podobne xG.")
+
+# Porównanie xG przeciwników
+if xg_przeciwnicy_home is not None and xg_przeciwnicy_away is not None:
+    if xg_przeciwnicy_home < xg_przeciwnicy_away:
+        print(f"Gospodarz lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_away - xg_przeciwnicy_home, 2)} mniej straconego xG).")
+    elif xg_przeciwnicy_home > xg_przeciwnicy_away:
+        print(f"Gość lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_home - xg_przeciwnicy_away, 2)} mniej straconego xG).")
+    else:
+        print("Obie drużyny równie dobrze ograniczają przeciwników pod względem xG.")
+
+
+# === STATYSTYKA VS. POZIOM PRZECIWNIKA ===
+print("\n\033[96m========== STATYSTYKA VS. POZIOM PRZECIWNIKA ==========\033[0m")
+
+print("\n\033[92mStatystyka Gospodarza: vs \033[0m")
+
+for grupa, dane in stats_home.items():
+    print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")
+
+print("\n\033[92mStatystyka Gościa: vs \033[0m")
+for grupa, dane in stats_away.items():
+    print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")

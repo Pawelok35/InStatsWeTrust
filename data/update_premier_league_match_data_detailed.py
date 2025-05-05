@@ -1,20 +1,17 @@
+
 import pandas as pd
 import os
-print("👉 Working directory:", os.getcwd())
 
 def update_match_data(raw_path, detailed_path):
-    # Wczytaj dane
+    print("👉 Working directory:", os.getcwd())
+
+    # Load data
     raw_data = pd.read_excel(raw_path)
-    detailed_data = pd.read_excel(detailed_path)
 
-    # Oczyść nagłówki
+    # Clean headers
     raw_data.columns = raw_data.columns.str.strip()
-    detailed_data.columns = detailed_data.columns.str.strip()
 
-    # Diagnostyka kolumn
-    print("📋 Kolumny w raw_data:", raw_data.columns.tolist())
-
-    # Tworzenie kolumn Goals_For i Goals_Against, jeśli ich nie ma
+    # Fill missing goals columns if needed
     if 'Goals_For' not in raw_data.columns or 'Goals_Against' not in raw_data.columns:
         print("⚠️ Brakuje kolumn Goals_For/Goals_Against – tworzymy je automatycznie z Score.")
         def split_score(score):
@@ -27,18 +24,18 @@ def update_match_data(raw_path, detailed_path):
     else:
         print("✅ Kolumny Goals_For i Goals_Against są obecne.")
 
-    # Normalizacja drużyn
+    # Normalize teams
     for col in ['Home', 'Away']:
         raw_data[col] = raw_data[col].astype(str).str.strip()
-    for col in ['TEAM', 'Opponent', 'Type']:
-        if col in detailed_data.columns:
-            detailed_data[col] = detailed_data[col].astype(str).str.strip()
 
-    # Przygotowanie danych
     raw_data['Round'] = raw_data['Round'].astype(int)
     raw_data['Date'] = pd.to_datetime(raw_data['Date'])
 
-    # Wiersze dla gospodarzy
+    print(f"📊 Meczy w pliku RAW: {len(raw_data)}")
+    print(f"🏟️ Unikalnych drużyn: {len(set(raw_data['Home']) | set(raw_data['Away']))}")
+    print(f"📅 Kolejki: {raw_data['Round'].min()} - {raw_data['Round'].max()}")
+
+    # Build home and away entries
     home_df = pd.DataFrame({
         'Round': raw_data['Round'],
         'TEAM': raw_data['Home'],
@@ -53,7 +50,6 @@ def update_match_data(raw_path, detailed_path):
         'Score': raw_data['Score']
     })
 
-    # Wiersze dla gości
     away_df = pd.DataFrame({
         'Round': raw_data['Round'],
         'TEAM': raw_data['Away'],
@@ -68,40 +64,17 @@ def update_match_data(raw_path, detailed_path):
         'Score': raw_data['Score'].apply(lambda s: f"{s.split('–')[1]}–{s.split('–')[0]}" if '–' in s else s)
     })
 
-    # Połącz dane
-    transformed_raw = pd.concat([home_df, away_df], ignore_index=True)
+    detailed_df = pd.concat([home_df, away_df], ignore_index=True)
+    detailed_df.drop_duplicates(subset=['Round', 'TEAM', 'Opponent', 'Type'], keep='first', inplace=True)
 
-    # Oczyść kluczowe kolumny
-    for df in [transformed_raw, detailed_data]:
-        df[['Round', 'TEAM', 'Opponent', 'Type']] = df[['Round', 'TEAM', 'Opponent', 'Type']].astype(str).apply(lambda x: x.str.strip())
+    # Save to Excel
+    detailed_df.to_excel(detailed_path, index=False)
+    print(f"✅ Zapisano do pliku: {detailed_path}")
+    print(f"🟢 Łącznie wierszy: {len(detailed_df)}")
 
-    # Usuń z detailed_data istniejące mecze (będą nadpisane)
-    detailed_data = detailed_data.merge(
-        transformed_raw[['Round', 'TEAM', 'Opponent', 'Type']],
-        on=['Round', 'TEAM', 'Opponent', 'Type'],
-        how='left',
-        indicator=True
-    )
-    detailed_data = detailed_data[detailed_data['_merge'] == 'left_only'].drop(columns=['_merge'])
-
-    # Połącz wszystko
-    updated_detailed_data = pd.concat([detailed_data, transformed_raw], ignore_index=True)
-    updated_detailed_data.drop_duplicates(subset=['Round', 'TEAM', 'Opponent', 'Type'], keep='first', inplace=True)
-
-    # Sprawdź, czy zmieniono dane
-    initial_len = len(detailed_data)
-    final_len = len(updated_detailed_data)
-
-    if final_len != initial_len:
-        updated_detailed_data.to_excel(detailed_path, index=False)
-        print(f"✅ Plik został zaktualizowany – nowa długość: {final_len} wierszy.")
-    else:
-        print("ℹ️ Brak zmian – plik nie został zmodyfikowany.")
-
-# Uruchomienie
+# Run
 if __name__ == "__main__":
     update_match_data(
         raw_path="data/premier_league_raw_match_data.xlsx",
         detailed_path="data/premier_league_match_data_detailed.xlsx"
     )
-
