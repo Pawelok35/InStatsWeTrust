@@ -61,7 +61,7 @@ def update_match_data(raw_path, detailed_path):
         'xG_Opponent': raw_data['xG'],
         'Goals_For': raw_data['Goals_Against'],
         'Goals_Against': raw_data['Goals_For'],
-        'Score': raw_data['Score'].apply(lambda s: f"{s.split('–')[1]}–{s.split('–')[0]}" if '–' in s else s)
+        'Score': raw_data['Score'].apply(lambda s: f"{s.split('–')[1]}–{s.split('–')[0]}" if isinstance(s, str) and '–' in s else s)
     })
 
     detailed_df = pd.concat([home_df, away_df], ignore_index=True)

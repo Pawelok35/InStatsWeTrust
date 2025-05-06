@@ -274,6 +274,45 @@ def analyze_match(gospodarz, gosc, kolejka):
         'Statystyki Gościa': away_stats
     }
 
+# === KROK Analiza przyszłościowej kolejki ===
+def analyze_round(kolejka):
+    """
+    Analizuje wszystkie mecze z danej kolejki i porównuje formę gospodarza vs gościa
+    na podstawie średnich punktów z ostatnich 5 meczów (home/away).
+    """
+    print(f"\n\033[95m📊 ANALIZA KOLEJKI {kolejka}\033[0m\n")
+    df_kolejka = df_matches[df_matches['Round'] == kolejka]
+
+    if df_kolejka.empty:
+        print("⚠️ Brak meczów w tej kolejce.")
+        return
+
+    for _, row in df_kolejka.iterrows():
+        home = row['Home']
+        away = row['Away']
+
+        form_home = get_recent_form(home, 'home', kolejka)
+        form_away = get_recent_form(away, 'away', kolejka)
+
+        sr_home = form_home.get('Śr. Punkty (5m)')
+        sr_away = form_away.get('Śr. Punkty (5m)')
+
+        if sr_home is not None and sr_away is not None:
+            roznica = round(sr_home - sr_away, 2)
+            if roznica > 0:
+                faworyt = f"\033[92m🏠 {home} stronger (+{roznica})\033[0m"
+            elif roznica < 0:
+                faworyt = f"\033[91m🛫 {away} stronger ({roznica})\033[0m"
+            else:
+                faworyt = "⚖️ Equal form"
+        else:
+            faworyt = "🔍 Not enough data"
+
+        print(f"{home} vs {away} → {faworyt}")
+
+
+# === KROK 4: URUCHOMIENIE ANALIZY ===
+
 # === KROK 4: URUCHOMIENIE ANALIZY ===
 
 if __name__ == "__main__":
@@ -321,13 +360,27 @@ if __name__ == "__main__":
             except ValueError:
                 print("\033[91mMusisz wpisać liczbę!\033[0m")
 
-    # Pobieranie danych
-    gospodarz = wybierz_druzyne("Podaj nazwę drużyny gospodarzy: ")
-    gosc = wybierz_druzyne("Podaj nazwę drużyny gości: ")
-    kolejka = wybierz_kolejke("Podaj numer kolejki: ")
+    # Wybór trybu działania
+    print("\nCo chcesz zrobić?")
+    print("1. Przeanalizować jeden mecz ręcznie")
+    print("2. Przeanalizować całą kolejkę")
+    wybor = input("Wybierz opcję (1 lub 2): ").strip()
 
-    # Analiza meczu
-    wynik = analyze_match(gospodarz, gosc, kolejka)
+    if wybor == "1":
+        gospodarz = wybierz_druzyne("Podaj nazwę drużyny gospodarzy: ")
+        gosc = wybierz_druzyne("Podaj nazwę drużyny gości: ")
+        kolejka = wybierz_kolejke("Podaj numer kolejki: ")
+        wynik = analyze_match(gospodarz, gosc, kolejka)
+        # W tym miejscu pozostaje Twoja dalsza analiza pojedynczego meczu
+
+    elif wybor == "2":
+        kolejka = wybierz_kolejke("Podaj numer kolejki do zbiorczej analizy: ")
+        analyze_round(kolejka)
+
+    else:
+        print("Niepoprawny wybór.")
+
+    
     fg = wynik['Forma Gospodarza']
     fgosc = wynik['Forma Gościa']
 
@@ -397,8 +450,8 @@ if sr_pkt_home is not None and sr_pkt_away is not None:
     else:
         faworyt_text = "BRAK RÓŻNICY MIĘDZY GOSPODARZEM A GOŚCIEM."
 
-print(f"Śr. punkty Gospodarza (dom): {sr_pkt_home if sr_pkt_home is not None else 'brak danych'}")
-print(f"Śr. punkty Gościa (wyjazd): {sr_pkt_away if sr_pkt_away is not None else 'brak danych'}\n")
+print(f"Śr. punkty Gospodarza (dom - ostatnie 5 meczy): {sr_pkt_home if sr_pkt_home is not None else 'brak danych'}")
+print(f"Śr. punkty Gościa (wyjazd - ostatnie 5 meczy): {sr_pkt_away if sr_pkt_away is not None else 'brak danych'}\n")
 print(f"\033[1m{faworyt_text}\033[0m\n")
 
 print(f"Średnie xG Gospodarza (z 5 meczy): {fg.get('Śr. xG (5m)', 'brak danych')}")
