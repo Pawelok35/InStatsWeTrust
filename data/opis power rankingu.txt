@@ -1,0 +1,9 @@
+| Power Rating       | Interpretacja                    | Charakterystyka                                                                     |
+| ------------------ | -------------------------------- | ----------------------------------------------------------------------------------- |
+| **≥ +2.5**         | **Elita**                        | Znakomita forma, częste wysokie wygrane (dominacje), drużyna w szczycie możliwości. |
+| **+1.5 to +2.49**  | **Bardzo mocna forma**           | Wyraźnie lepsza od przeciętnej, regularnie wygrywa, dominuje słabszych.             |
+| **+0.5 to +1.49**  | **Dobra forma**                  | Przewaga nad przeciwnikami, stabilna forma, nie zawsze dominuje.                    |
+| **-0.49 to +0.49** | **Średnia forma**                | Zbliżona forma do przeciwników, może wygrać lub przegrać — wyrównany poziom.        |
+| **-0.5 to -1.49**  | **Słaba forma**                  | Częste straty punktów, brak dominacji, podatność na porażki.                        |
+| **-1.5 to -2.49**  | **Bardzo słaba forma**           | Regularne porażki, niska skuteczność, brak punktów i dominacji.                     |
+| **≤ -2.5**         | **Kryzys / bardzo słaby zespół** | Fatalna forma, drużyna przegrywa wysoko i często, niezdolna do rywalizacji.         |

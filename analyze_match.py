@@ -118,6 +118,7 @@ def get_recent_form(druzyna, typ, kolejka):
     sr_pozycja = round(sum(pozycje_przeciwnikow) / len(pozycje_przeciwnikow), 2) if pozycje_przeciwnikow else None
     sr_xg_przeciwnikow = round(sum(xg_przeciwnikow) / len(xg_przeciwnikow), 2) if xg_przeciwnikow else None
 
+    dom_count = int(ostatnie['Domination'].sum()) if 'Domination' in ostatnie.columns else 0
     return {
         'Śr. Punkty (5m)': sr_pkt,
         'Śr. xG (5m)': sr_xg,
@@ -126,6 +127,20 @@ def get_recent_form(druzyna, typ, kolejka):
         'Przeciwnicy Info': przeciwnicy_info
     }
 
+def calculate_power_rating(form_data):
+    """
+    Oblicza wskaźnik siły drużyny (Power Rating) na podstawie formy z ostatnich 5 meczów.
+    Uwzględnia średnie punkty, różnicę xG, jakość przeciwników i dominacje.
+    """
+    pkt = form_data.get('Śr. Punkty (5m)', 0) or 0
+    xg = form_data.get('Śr. xG (5m)', 0) or 0
+    xga = form_data.get('Śr. xG Przeciwników (5m)', 0) or 0
+    poz = form_data.get('Śr. Pozycja Przeciwników (5m)', 20) or 20
+    dominacje = form_data.get('Domination Count', 0) or 0
+
+    diff_xg = xg - xga
+    rating = (pkt * 2.0) + (diff_xg * 1.5) - (poz * 0.3) + (dominacje * 0.5)
+    return round(rating, 2)
 
 
 def get_average_opponent_position(mecze, team_tables_path, typ):
@@ -252,6 +267,9 @@ def get_season_form_vs_opponent_tiers(druzyna, typ, kolejka):
 def analyze_match(gospodarz, gosc, kolejka):
     home_form = get_recent_form(gospodarz, 'home', kolejka)
     away_form = get_recent_form(gosc, 'away', kolejka)
+    power_home = calculate_power_rating(home_form)
+    power_away = calculate_power_rating(away_form)
+
     home_stats = get_home_stats(gospodarz, kolejka)
     away_stats = get_latest_away_stats(gosc, kolejka)
     df_match = df_matches[(df_matches['Round'] == kolejka) &
@@ -271,7 +289,10 @@ def analyze_match(gospodarz, gosc, kolejka):
         'xG Gość': xg_away,
         'Wynik meczu': wynik_meczu,
         'Statystyki Gospodarza': home_stats,
-        'Statystyki Gościa': away_stats
+        'Statystyki Gościa': away_stats,
+        'PowerRating Gospodarza': power_home,
+        'PowerRating Gościa': power_away
+
     }
 
 # === KROK Analiza przyszłościowej kolejki ===
@@ -293,31 +314,28 @@ def analyze_round(kolejka):
 
         form_home = get_recent_form(home, 'home', kolejka)
         form_away = get_recent_form(away, 'away', kolejka)
+        power_home = calculate_power_rating(form_home)
+        power_away = calculate_power_rating(form_away)
 
-        sr_home = form_home.get('Śr. Punkty (5m)')
-        sr_away = form_away.get('Śr. Punkty (5m)')
-
-        if sr_home is not None and sr_away is not None:
-            roznica = round(sr_home - sr_away, 2)
-
-            if roznica >= 1:
-                faworyt = f"\033[92m🟢 {home} clearly stronger (+{roznica})\033[0m"
-            elif roznica <= -1:
-                faworyt = f"\033[91m🔴 {away} clearly stronger ({roznica})\033[0m"
-            elif roznica > 0:
-                faworyt = f"\033[32m🏠 {home} slightly stronger (+{roznica})\033[0m"
-            elif roznica < 0:
-                faworyt = f"\033[31m🛫 {away} slightly stronger ({roznica})\033[0m"
+        if power_home is not None and power_away is not None:
+            diff = round(power_home - power_away, 2)
+            if diff >= 1.0:
+                symbol = "🟢" if diff > 0 else "🔴"
+                label = f"{home if diff > 0 else away} clearly stronger ({diff:+})"
+            elif abs(diff) >= 0.5:
+                symbol = "🏠" if diff > 0 else "🛫"
+                label = f"{home if diff > 0 else away} slightly stronger ({diff:+})"
             else:
-                faworyt = "⚖️ Equal form"
-
+                symbol = "⚖️"
+                label = "Equal Power Rating"
         else:
-            faworyt = "🔍 Not enough data"
+            symbol = "🔍"
+            label = "Not enough data"
 
-        print(f"{home} vs {away} → {faworyt}")
+        print(f"{home} vs {away} → {symbol} {label}")
 
 
-# === KROK 4: URUCHOMIENIE ANALIZY ===
+
 
 # === KROK 4: URUCHOMIENIE ANALIZY ===
 
@@ -389,6 +407,8 @@ if __name__ == "__main__":
     
     fg = wynik['Forma Gospodarza']
     fgosc = wynik['Forma Gościa']
+    power_home = wynik.get('PowerRating Gospodarza')
+    power_away = wynik.get('PowerRating Gościa')
 
     # POBIERZ POZYCJE Z TABEL
     home_stats = get_home_stats(gospodarz, kolejka)
@@ -439,7 +459,8 @@ if __name__ == "__main__":
             print(f"- {przeciwnik_info}")
     print("\033[0m")
 
-  # === PODSUMOWANIE ===
+
+# === PODSUMOWANIE ===
 print("\n\033[93m========== PODSUMOWANIE ==========\033[0m")
 
 sr_pkt_home = fg.get('Śr. Punkty (5m)')
@@ -460,6 +481,13 @@ print(f"Śr. punkty Gospodarza (dom - ostatnie 5 meczy): {sr_pkt_home if sr_pkt_
 print(f"Śr. punkty Gościa (wyjazd - ostatnie 5 meczy): {sr_pkt_away if sr_pkt_away is not None else 'brak danych'}\n")
 print(f"\033[1m{faworyt_text}\033[0m\n")
 
+# === POWER RATING ===
+power_home = calculate_power_rating(fg)
+power_away = calculate_power_rating(fgosc)
+print(f"📈 Power Rating Gospodarza: {power_home if power_home is not None else 'brak danych'}")
+print(f"📈 Power Rating Gościa: {power_away if power_away is not None else 'brak danych'}\n")
+
+# === xG i pozycje przeciwników ===
 print(f"Średnie xG Gospodarza (z 5 meczy): {fg.get('Śr. xG (5m)', 'brak danych')}")
 print(f"Średnie xG przeciwników Gospodarza (z 5 meczy): {fg.get('Śr. xG Przeciwników (5m)', 'brak danych')}\n")
 print(f"Średnie xG Gościa (z 5 meczy): {fgosc.get('Śr. xG (5m)', 'brak danych')}")
@@ -473,10 +501,39 @@ if isinstance(wynik, dict):
 else:
     print(f"Błąd: zmienna 'wynik' nie jest słownikiem, tylko: {type(wynik)}")
 
+# === INTERPRETACJA POWER RATING ===
+def interpretuj_power_rating(wartosc):
+    """
+    Interpretuje wartość Power Rating zgodnie z ustalonymi przedziałami.
+    """
+    if wartosc is None:
+        return "brak danych"
+    elif wartosc >= 2.5:
+        return f"🟢 **ELITA** ({wartosc:+}) — znakomita forma, częste wysokie wygrane."
+    elif wartosc >= 1.5:
+        return f"🟢 **Bardzo mocna forma** ({wartosc:+}) — regularne zwycięstwa, dominacja nad słabszymi."
+    elif wartosc >= 0.5:
+        return f"🟡 **Dobra forma** ({wartosc:+}) — stabilna, przewaga nad przeciętnymi zespołami."
+    elif wartosc > -0.5:
+        return f"⚪ **Średnia forma** ({wartosc:+}) — wyrównany poziom, mecz może pójść w obie strony."
+    elif wartosc > -1.5:
+        return f"🟠 **Słaba forma** ({wartosc:+}) — drużyna traci punkty, podatna na porażki."
+    elif wartosc > -2.5:
+        return f"🔴 **Bardzo słaba forma** ({wartosc:+}) — częste porażki, brak skuteczności."
+    else:
+        return f"🔴 **Kryzys / bardzo słaby zespół** ({wartosc:+}) — fatalna forma, niezdolna do rywalizacji."
+
+
+print("\n\033[95m========== INTERPRETACJA POWER RATING ==========\033[0m")
+power_home = calculate_power_rating(fg)
+power_away = calculate_power_rating(fgosc)
+
+print(f"Power Rating Gospodarza: {power_home if power_home is not None else 'brak danych'} → {interpretuj_power_rating(power_home)}")
+print(f"Power Rating Gościa: {power_away if power_away is not None else 'brak danych'} → {interpretuj_power_rating(power_away)}")
 
 
 
-   # === DODATKOWE WNIOSKI ===
+# === DODATKOWE WNIOSKI ===
 print("\n\033[92m========== DODATKOWE WNIOSKI ==========\033[0m")
 
 def ocena_formy(srednia_punktow):
@@ -491,44 +548,40 @@ def ocena_formy(srednia_punktow):
     else:
         return "Słaba forma"
 
-forma_gospodarza = ocena_formy(sr_pkt_home)
-forma_goscia = ocena_formy(sr_pkt_away)
-
-print(f"Forma Gospodarza: {forma_gospodarza}")
-print(f"Forma Gościa: {forma_goscia}\n")
+print(f"Forma Gospodarza: {ocena_formy(sr_pkt_home)}")
+print(f"Forma Gościa: {ocena_formy(sr_pkt_away)}\n")
 
 xg_home = fg.get('Śr. xG (5m)')
 xg_away = fgosc.get('Śr. xG (5m)')
 xg_przeciwnicy_home = fg.get('Śr. xG Przeciwników (5m)')
 xg_przeciwnicy_away = fgosc.get('Śr. xG Przeciwników (5m)')
 
-# Porównanie xG generowanego
 if xg_home is not None and xg_away is not None:
-    if xg_home > xg_away:
-        print(f"Gospodarz generuje więcej xG (średnio {round(xg_home - xg_away, 2)} więcej).")
-    elif xg_home < xg_away:
-        print(f"Gość generuje więcej xG (średnio {round(xg_away - xg_home, 2)} więcej).")
+    diff = round(xg_home - xg_away, 2)
+    if diff > 0:
+        print(f"Gospodarz generuje więcej xG (średnio {diff} więcej).")
+    elif diff < 0:
+        print(f"Gość generuje więcej xG (średnio {abs(diff)} więcej).")
     else:
         print("Obie drużyny generują podobne xG.")
 
-# Porównanie xG przeciwników
 if xg_przeciwnicy_home is not None and xg_przeciwnicy_away is not None:
-    if xg_przeciwnicy_home < xg_przeciwnicy_away:
-        print(f"Gospodarz lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_away - xg_przeciwnicy_home, 2)} mniej straconego xG).")
-    elif xg_przeciwnicy_home > xg_przeciwnicy_away:
-        print(f"Gość lepiej ogranicza przeciwników pod względem xG (średnio {round(xg_przeciwnicy_home - xg_przeciwnicy_away, 2)} mniej straconego xG).")
+    diff = round(xg_przeciwnicy_away - xg_przeciwnicy_home, 2)
+    if diff > 0:
+        print(f"Gospodarz lepiej ogranicza przeciwników pod względem xG (średnio {diff} mniej straconego xG).")
+    elif diff < 0:
+        print(f"Gość lepiej ogranicza przeciwników pod względem xG (średnio {abs(diff)} mniej straconego xG).")
     else:
         print("Obie drużyny równie dobrze ograniczają przeciwników pod względem xG.")
-
 
 # === STATYSTYKA VS. POZIOM PRZECIWNIKA ===
 print("\n\033[96m========== STATYSTYKA VS. POZIOM PRZECIWNIKA ==========\033[0m")
 
 print("\n\033[92mStatystyka Gospodarza: vs \033[0m")
-
 for grupa, dane in stats_home.items():
     print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")
 
 print("\n\033[92mStatystyka Gościa: vs \033[0m")
 for grupa, dane in stats_away.items():
     print(f"{grupa:<10} | Mecze: {dane['Mecze']:<2} | Śr. Pkt: {dane.get('Śr. Pkt', '-'):>4} | W:{dane['W']} R:{dane['R']} P:{dane['P']}")
+
