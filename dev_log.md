@@ -127,3 +127,21 @@
 
 ---
 
+## 📅 2025-05-06
+
+### ✅ Completed:
+- Implemented and integrated **Power Rating** logic based on average points and number of “Domination” wins over the last 5 matches.
+- Created `calculate_power_rating()` function to produce a single score summarizing recent team strength.
+- Designed and documented Power Rating interpretation scale with 7 detailed tiers, from “Elite” to “Crisis”.
+- Displayed Power Ratings clearly within match summaries, just after average points.
+- Refactored output section to make rating comparison and summaries cleaner and easier to interpret.
+- Enhanced `analyze_round()` to use Power Rating differences for quick visual comparison of team strength.
+- Updated markdown documentation and appended Power Rating explanation to the `README.md`.
+
+### 🐞 Fixed:
+- Corrected uninitialized variables (`sr_home`, `sr_away`) in round analysis that caused inconsistencies.
+- Moved Power Rating values from a hard-to-read location to a more logical position just under average points.
+- Validated that Power Ratings and opponent stats are calculated properly for all teams with complete data.
+- Reorganized summary output for better readability and separation of stats, insights, and tier summaries.
+
+---
