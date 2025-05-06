@@ -299,12 +299,18 @@ def analyze_round(kolejka):
 
         if sr_home is not None and sr_away is not None:
             roznica = round(sr_home - sr_away, 2)
-            if roznica > 0:
-                faworyt = f"\033[92m🏠 {home} stronger (+{roznica})\033[0m"
+
+            if roznica >= 1:
+                faworyt = f"\033[92m🟢 {home} clearly stronger (+{roznica})\033[0m"
+            elif roznica <= -1:
+                faworyt = f"\033[91m🔴 {away} clearly stronger ({roznica})\033[0m"
+            elif roznica > 0:
+                faworyt = f"\033[32m🏠 {home} slightly stronger (+{roznica})\033[0m"
             elif roznica < 0:
-                faworyt = f"\033[91m🛫 {away} stronger ({roznica})\033[0m"
+                faworyt = f"\033[31m🛫 {away} slightly stronger ({roznica})\033[0m"
             else:
                 faworyt = "⚖️ Equal form"
+
         else:
             faworyt = "🔍 Not enough data"
 
