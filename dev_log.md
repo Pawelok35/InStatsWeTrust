@@ -145,3 +145,21 @@
 - Reorganized summary output for better readability and separation of stats, insights, and tier summaries.
 
 ---
+
+## 📅 2025-05-07
+
+### ✅ Completed:
+- Reworked `analyze_round()` to use **difference in average points** from the last 5 home/away matches instead of Power Rating.
+- Adjusted output formatting with **fixed-width columns** to align all match data (matchup, favorite, signal, difference) perfectly.
+- Created a new version of `ocena_sygnalu()` to reflect **point-based differences**, including a 5-tier interpretation with emojis.
+- Integrated point difference presentation: "ADVANTAGE FOR HOME TEAM IS X" styled and aligned consistently across all matches.
+- Ensured signal and advantage columns remain **vertically aligned** even with long labels like "✅ WARTO ZAGRAĆ...".
+- Kept Power Rating logic and related functions intact, but decoupled from round-level analysis for clarity and precision.
+
+### 🐞 Fixed:
+- Eliminated misalignment in visual output when long signal texts caused the final column to shift.
+- Resolved confusion between Power Rating difference and average point difference by introducing explicit separation of logic.
+- Replaced incorrect use of Power Rating in signal generation with accurate point-based logic using recent form data.
+- Simplified logic for clarity by pulling `Śr. Punkty (5m)` directly from recent form instead of relying on derived scores.
+
+---

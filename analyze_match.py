@@ -372,29 +372,36 @@ def analyze_round(kolejka):
         power_away = calculate_power_score(form_away)
 
         if power_home is None or power_away is None:
-            print(f"{home} vs {away} → 🔍 Brak danych")
+            print(f"{home} vs {away:<30} → 🔍 Brak danych")
             continue
 
-        diff = round(power_home - power_away, 2)
+        sr_pkt_home = form_home.get('Śr. Punkty (5m)', 0) or 0
+        sr_pkt_away = form_away.get('Śr. Punkty (5m)', 0) or 0
+        diff = round(sr_pkt_home - sr_pkt_away, 2)
+
         if diff > 0:
             faworyt = home
+            roznica_txt = f"RÓŻNICA NA KORZYŚĆ GOSPODARZA WYNOSI {diff}"
         elif diff < 0:
             faworyt = away
+            roznica_txt = f"RÓŻNICA NA KORZYŚĆ GOŚCIA WYNOSI {abs(diff)}"
         else:
             faworyt = "Brak przewagi"
+            roznica_txt = "BRAK RÓŻNICY MIĘDZY DRUŻYNAMI"
 
-        sygnal = ocena_sygnalu(power_home, power_away)
-        przewaga = f"RÓŻNICA NA KORZYŚĆ GOSPODARZA WYNOSI {diff}" if diff > 0 else \
-                   f"RÓŻNICA NA KORZYŚĆ GOŚCIA WYNOSI {abs(diff)}" if diff < 0 else \
-                   "BRAK RÓŻNICY MIĘDZY DRUŻYNAMI"
+        sygnal = ocena_sygnalu(power_home, power_away)  # np. 🟢 Przewaga gościa – możliwa okazja (4/5)
 
-        # Dodatkowy styl dla mocnej przewagi
+        # Jeśli chcesz pogrubić różnice przy dużych wartościach
         if abs(diff) >= 1.0:
-            przewaga = f"\033[1m{przewaga}\033[0m"
+            roznica_txt = f"\033[1m{roznica_txt}\033[0m"
 
-        print(f"{home} vs {away} → {faworyt}")
-        print(f"Sygnał: {sygnal}")
-        print(f"|| {przewaga}\n")
+        matchup = f"{home} vs {away}"
+        line = (
+        f"{matchup:<35} → {faworyt:<20} "
+        f"|| Sygnał: {sygnal:<55} "
+        f"|| {roznica_txt:<50}"
+        )
+        print(line)
 
 
 # === INTERPRETACJA POWER RATING ===
