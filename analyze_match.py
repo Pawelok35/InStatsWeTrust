@@ -624,98 +624,38 @@ if __name__ == "__main__":
             except ValueError:
                 print("\033[91mMusisz wpisać liczbę!\033[0m")
 
-    # Wybór trybu działania
+    # Wybór trybu działania (z pętlą)
+
+while True:
     print("\nCo chcesz zrobić?")
     print("1. Przeanalizować jeden mecz ręcznie")
     print("2. Przeanalizować całą kolejkę")
     print("3. Wygenerować Power Ranking przed daną kolejką")
-    wybor = input("Wybierz opcję (1, 2 lub 3): ").strip()
-
+    print("0. Wyjście")
+    wybor = input("Wybierz opcję (0, 1, 2 lub 3): ").strip()
 
     if wybor == "1":
         gospodarz = wybierz_druzyne("Podaj nazwę drużyny gospodarzy: ")
         gosc = wybierz_druzyne("Podaj nazwę drużyny gości: ")
         kolejka = wybierz_kolejke("Podaj numer kolejki: ")
         wynik = analyze_match(gospodarz, gosc, kolejka)
-        # W tym miejscu pozostaje Twoja dalsza analiza pojedynczego meczu
+        # Możesz tu dalej analizować mecz lub wyświetlić podsumowanie
 
     elif wybor == "2":
         kolejka = wybierz_kolejke("Podaj numer kolejki do zbiorczej analizy: ")
         analyze_round(kolejka)
+
     elif wybor == "3":
         kolejka = wybierz_kolejke("Podaj numer kolejki (Power Ranking będzie liczony na podstawie wcześniejszych danych): ")
         generate_power_ranking(kolejka)
 
+    elif wybor == "0":
+        print("Zakończono działanie programu. 👋")
+        break
 
     else:
-        print("Niepoprawny wybór.")
+        print("Niepoprawny wybór. Spróbuj ponownie.")
 
-    
-    fg = wynik['Forma Gospodarza']
-    fgosc = wynik['Forma Gościa']
-    power_home = wynik.get('PowerRating Gospodarza')
-    power_away = wynik.get('PowerRating Gościa')
 
-    # POBIERZ POZYCJE Z TABEL
-    home_stats = get_home_stats(gospodarz, kolejka)
-    away_stats = get_latest_away_stats(gosc, kolejka)
-
-    
-
-    # Statystyka vs poziom przeciwnika
-    stats_home = get_season_form_vs_opponent_tiers(gospodarz, 'home', kolejka)
-    stats_away = get_season_form_vs_opponent_tiers(gosc, 'away', kolejka) 
-
-      # FORMA GOSPODARZA
-    print("\n\033[94m----------------------------------------")
-    print("FORMA GOSPODARZA:")
-    pozycja_gospodarza = home_stats.get('Position') if home_stats else 'brak danych'
-    print(f"\033[94mFORMA GOSPODARZA: {gospodarz} ({pozycja_gospodarza}. miejsce w tabeli domowej)\033[0m")
-    print(f"Średnia punktów: {fg.get('Śr. Punkty (5m)', 'brak danych')}")
-    print(f"Średnie xG: {fg.get('Śr. xG (5m)', 'brak danych')}")
-    print("Ostatnie mecze gospodarza:")
-    for przeciwnik_info in fg.get('Przeciwnicy Info', []):
-        parts = przeciwnik_info.split("|")
-        if len(parts) == 3:
-            nazwa = parts[0].strip()
-            wynik_meczowy = parts[1].replace("Wynik:", "").strip()
-            rezultat = parts[2].strip()
-            print(f"- {nazwa:<30} Wynik: {wynik_meczowy} | {rezultat}")
-        else:
-            print(f"- {przeciwnik_info}")
-    print("\033[0m")
-
-    # FORMA GOŚCIA
-    print("\n\033[91m----------------------------------------")
-    print("FORMA GOŚCIA:")
-    pozycja_goscia = away_stats.get('Position') if away_stats else 'brak danych'
-    print(f"{gosc} ({pozycja_goscia}. miejsce w tabeli wyjazdowej)")
-  
-    print(f"Średnia punktów: {fgosc.get('Śr. Punkty (5m)', 'brak danych')}")
-    print(f"Średnie xG: {fgosc.get('Śr. xG (5m)', 'brak danych')}")
-    print("Ostatnie mecze gościa:")
-    for przeciwnik_info in fgosc.get('Przeciwnicy Info', []):
-        parts = przeciwnik_info.split("|")
-        if len(parts) == 3:
-            nazwa = parts[0].strip()
-            wynik_meczowy = parts[1].replace("Wynik:", "").strip()
-            rezultat = parts[2].strip()
-            print(f"- {nazwa:<30} Wynik: {wynik_meczowy} | {rezultat}")
-        else:
-            print(f"- {przeciwnik_info}")
-    print("\033[0m")
-
-sr_pkt_home = fg.get('Śr. Punkty (5m)')
-sr_pkt_away = fgosc.get('Śr. Punkty (5m)')
-xg_home = fg.get('Śr. xG (5m)')
-xg_away = fgosc.get('Śr. xG (5m)')
-xg_przeciwnicy_home = fg.get('Śr. xG Przeciwników (5m)')
-xg_przeciwnicy_away = fgosc.get('Śr. xG Przeciwników (5m)')
-
-print(format_summary_output(fg, fgosc, wynik, power_home, power_away,
-                            sr_pkt_home, sr_pkt_away,
-                            xg_home, xg_away,
-                            xg_przeciwnicy_home, xg_przeciwnicy_away,
-                            stats_home, stats_away))
 
 
