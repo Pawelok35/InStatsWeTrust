@@ -156,7 +156,6 @@ def get_efficiency_vs_opponent_tier(matches):
 
     return weighted_sum / total_weight if total_weight > 0 else 0
 
-
 def calculate_power_score(form_data):
     xpts = form_data.get('Śr. xPTS (5m)', 0) or 0
     xg = form_data.get('Śr. xG (5m)', 0) or 0
@@ -182,7 +181,6 @@ def calculate_power_score(form_data):
 
     score = max(0, min(score * 40, 100))  # skalowanie do 0–100
     return round(score, 2)
-
 
 def get_average_opponent_position(mecze, team_tables_path, typ):
     import pandas as pd
@@ -235,7 +233,6 @@ def ocena_sygnału_z_power_rating(power_home, power_away):
         return "🟡 Umiarkowana przewaga gościa"
     else:
         return "🚫 Brak wyraźnej przewagi – lepiej nie grać"
-
 
 def get_season_form_vs_opponent_tiers(druzyna, typ, kolejka):
     """
@@ -355,11 +352,9 @@ def analyze_match(gospodarz, gosc, kolejka):
     }
 
 # === KROK Analiza przyszłościowej kolejki ===
+
+  
 def analyze_round(kolejka):
-    """
-    Analizuje wszystkie mecze z danej kolejki i porównuje formę gospodarza vs gościa
-    na podstawie średnich punktów z ostatnich 5 meczów (home/away).
-    """
     print(f"\n\033[95m📊 ANALIZA KOLEJKI {kolejka}\033[0m\n")
     df_kolejka = df_matches[df_matches['Round'] == kolejka]
 
@@ -376,22 +371,31 @@ def analyze_round(kolejka):
         power_home = calculate_power_score(form_home)
         power_away = calculate_power_score(form_away)
 
-        if power_home is not None and power_away is not None:
-            diff = round(power_home - power_away, 2)
-            if diff >= 1.0:
-                symbol = "🟢" if diff > 0 else "🔴"
-                label = f"{home if diff > 0 else away} clearly stronger ({diff:+})"
-            elif abs(diff) >= 0.5:
-                symbol = "🏠" if diff > 0 else "🛫"
-                label = f"{home if diff > 0 else away} slightly stronger ({diff:+})"
-            else:
-                symbol = "⚖️"
-                label = "Equal Power Rating"
-        else:
-            symbol = "🔍"
-            label = "Not enough data"
+        if power_home is None or power_away is None:
+            print(f"{home} vs {away} → 🔍 Brak danych")
+            continue
 
-        print(f"{home} vs {away} → {symbol} {label}")
+        diff = round(power_home - power_away, 2)
+        if diff > 0:
+            faworyt = home
+        elif diff < 0:
+            faworyt = away
+        else:
+            faworyt = "Brak przewagi"
+
+        sygnal = ocena_sygnalu(power_home, power_away)
+        przewaga = f"RÓŻNICA NA KORZYŚĆ GOSPODARZA WYNOSI {diff}" if diff > 0 else \
+                   f"RÓŻNICA NA KORZYŚĆ GOŚCIA WYNOSI {abs(diff)}" if diff < 0 else \
+                   "BRAK RÓŻNICY MIĘDZY DRUŻYNAMI"
+
+        # Dodatkowy styl dla mocnej przewagi
+        if abs(diff) >= 1.0:
+            przewaga = f"\033[1m{przewaga}\033[0m"
+
+        print(f"{home} vs {away} → {faworyt}")
+        print(f"Sygnał: {sygnal}")
+        print(f"|| {przewaga}\n")
+
 
 # === INTERPRETACJA POWER RATING ===
 def interpretuj_power_score(wartosc):
