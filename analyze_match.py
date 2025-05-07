@@ -125,20 +125,31 @@ def get_recent_form(druzyna, typ, kolejka):
         'Przeciwnicy Info': przeciwnicy_info
     }
 
-def calculate_power_rating(form_data):
-    """
-    Oblicza wskaźnik siły drużyny (Power Rating) na podstawie formy z ostatnich 5 meczów.
-    Uwzględnia średnie punkty, różnicę xG, jakość przeciwników i dominacje.
-    """
-    pkt = form_data.get('Śr. Punkty (5m)', 0) or 0
+def calculate_power_score(form_data):
+    xpts = form_data.get('Śr. xPTS (5m)', 0) or 0
     xg = form_data.get('Śr. xG (5m)', 0) or 0
     xga = form_data.get('Śr. xG Przeciwników (5m)', 0) or 0
+    pkt = form_data.get('Śr. Punkty (5m)', 0) or 0
     poz = form_data.get('Śr. Pozycja Przeciwników (5m)', 20) or 20
     dominacje = form_data.get('Domination Count', 0) or 0
+    momentum = form_data.get('Momentum', 0) or 0  # wartość od -1 do 1
 
     diff_xg = xg - xga
-    rating = (pkt * 2.0) + (diff_xg * 1.5) - (poz * 0.3) + (dominacje * 0.5)
-    return round(rating, 2)
+    dominance_ratio = dominacje / 5  # z 5 ostatnich meczów
+
+    score = (
+        0.30 * xpts +
+        0.20 * diff_xg +
+        0.15 * pkt +
+        0.10 * dominance_ratio +
+        0.15 * (1 - poz / 20) +
+        0.10 * momentum
+    )
+
+    score = max(0, min(score * 40, 100))  # skalowanie do 0–100
+    return round(score, 2)
+
+
 
 
 def get_average_opponent_position(mecze, team_tables_path, typ):
@@ -265,8 +276,8 @@ def get_season_form_vs_opponent_tiers(druzyna, typ, kolejka):
 def analyze_match(gospodarz, gosc, kolejka):
     home_form = get_recent_form(gospodarz, 'home', kolejka)
     away_form = get_recent_form(gosc, 'away', kolejka)
-    power_home = calculate_power_rating(home_form)
-    power_away = calculate_power_rating(away_form)
+    power_home = calculate_power_score(home_form)
+    power_away = calculate_power_score(away_form)
 
     home_stats = get_home_stats(gospodarz, kolejka)
     away_stats = get_latest_away_stats(gosc, kolejka)
@@ -312,8 +323,8 @@ def analyze_round(kolejka):
 
         form_home = get_recent_form(home, 'home', kolejka)
         form_away = get_recent_form(away, 'away', kolejka)
-        power_home = calculate_power_rating(form_home)
-        power_away = calculate_power_rating(form_away)
+        power_home = calculate_power_score(form_home)
+        power_away = calculate_power_score(form_away)
 
         if power_home is not None and power_away is not None:
             diff = round(power_home - power_away, 2)
@@ -331,6 +342,58 @@ def analyze_round(kolejka):
             label = "Not enough data"
 
         print(f"{home} vs {away} → {symbol} {label}")
+
+# === INTERPRETACJA POWER RATING ===
+def interpretuj_power_score(wartosc):
+    if wartosc is None:
+        return "brak danych"
+    elif wartosc >= 20:
+        return f"🟢 **ELITA** ({wartosc}) — znakomita forma, częste wysokie wygrane i dominacja."
+    elif wartosc >= 15:
+        return f"🟢 **Silna drużyna** ({wartosc}) — dobra forma, przewaga nad większością rywali."
+    elif wartosc >= 10:
+        return f"🟡 **Stabilna jakość** ({wartosc}) — umiarkowana forma, zdolność wygrywania z przeciętnymi."
+    elif wartosc >= 5:
+        return f"🟠 **Forma przeciętna / słabsza** ({wartosc}) — drużyna niestabilna lub w lekkim dołku."
+    else:
+        return f"🔴 **Kryzys / bardzo słaba forma** ({wartosc}) — częste porażki, duże problemy w grze."
+
+
+def generate_power_ranking(kolejka):
+    print(f"\n\033[96m📊 POWER RANKING PRZED KOLEJKĄ {kolejka}\033[0m\n")
+    teams = sorted(set(df_long['TEAM'].dropna().unique()))
+    ranking = []
+
+    for team in teams:
+        home_form = get_recent_form(team, 'home', kolejka)
+        away_form = get_recent_form(team, 'away', kolejka)
+        # 👇 DODAJ TUTAJ DEBUG
+        print(f"\n=== {team.upper()} ===")
+        print("🏠 HOME FORM:")
+        for k, v in home_form.items():
+            print(f"{k}: {v}")
+        print("\n🛫 AWAY FORM:")
+        for k, v in away_form.items():
+            print(f"{k}: {v}")
+        power_home = calculate_power_score(home_form)
+        power_away = calculate_power_score(away_form)
+
+        if power_home is not None and power_away is not None:
+            avg_power = round((power_home + power_away) / 2, 2)
+        elif power_home is not None:
+            avg_power = power_home
+        elif power_away is not None:
+            avg_power = power_away
+        else:
+            avg_power = None
+
+        label = interpretuj_power_score(avg_power) if avg_power is not None else "brak danych"
+        ranking.append((team, avg_power, label))
+
+    ranking = sorted([r for r in ranking if r[1] is not None], key=lambda x: x[1], reverse=True)
+
+    for idx, (team, power, opis) in enumerate(ranking, start=1):
+        print(f"{idx:>2}. {team:<20} → {power:>5}  {opis}")
 
 
 
@@ -386,7 +449,9 @@ if __name__ == "__main__":
     print("\nCo chcesz zrobić?")
     print("1. Przeanalizować jeden mecz ręcznie")
     print("2. Przeanalizować całą kolejkę")
-    wybor = input("Wybierz opcję (1 lub 2): ").strip()
+    print("3. Wygenerować Power Ranking przed daną kolejką")
+    wybor = input("Wybierz opcję (1, 2 lub 3): ").strip()
+
 
     if wybor == "1":
         gospodarz = wybierz_druzyne("Podaj nazwę drużyny gospodarzy: ")
@@ -398,6 +463,10 @@ if __name__ == "__main__":
     elif wybor == "2":
         kolejka = wybierz_kolejke("Podaj numer kolejki do zbiorczej analizy: ")
         analyze_round(kolejka)
+    elif wybor == "3":
+        kolejka = wybierz_kolejke("Podaj numer kolejki (Power Ranking będzie liczony na podstawie wcześniejszych danych): ")
+        generate_power_ranking(kolejka)
+
 
     else:
         print("Niepoprawny wybór.")
@@ -480,8 +549,8 @@ print(f"Śr. punkty Gościa (wyjazd - ostatnie 5 meczy): {sr_pkt_away if sr_pkt_
 print(f"\033[1m{faworyt_text}\033[0m\n")
 
 # === POWER RATING ===
-power_home = calculate_power_rating(fg)
-power_away = calculate_power_rating(fgosc)
+power_home = calculate_power_score(fg)
+power_away = calculate_power_score(fgosc)
 print(f"📈 Power Rating Gospodarza: {power_home if power_home is not None else 'brak danych'}")
 print(f"📈 Power Rating Gościa: {power_away if power_away is not None else 'brak danych'}\n")
 
@@ -499,35 +568,16 @@ if isinstance(wynik, dict):
 else:
     print(f"Błąd: zmienna 'wynik' nie jest słownikiem, tylko: {type(wynik)}")
 
-# === INTERPRETACJA POWER RATING ===
-def interpretuj_power_rating(wartosc):
-    """
-    Interpretuje wartość Power Rating zgodnie z ustalonymi przedziałami.
-    """
-    if wartosc is None:
-        return "brak danych"
-    elif wartosc >= 2.5:
-        return f"🟢 **ELITA** ({wartosc:+}) — znakomita forma, częste wysokie wygrane."
-    elif wartosc >= 1.5:
-        return f"🟢 **Bardzo mocna forma** ({wartosc:+}) — regularne zwycięstwa, dominacja nad słabszymi."
-    elif wartosc >= 0.5:
-        return f"🟡 **Dobra forma** ({wartosc:+}) — stabilna, przewaga nad przeciętnymi zespołami."
-    elif wartosc > -0.5:
-        return f"⚪ **Średnia forma** ({wartosc:+}) — wyrównany poziom, mecz może pójść w obie strony."
-    elif wartosc > -1.5:
-        return f"🟠 **Słaba forma** ({wartosc:+}) — drużyna traci punkty, podatna na porażki."
-    elif wartosc > -2.5:
-        return f"🔴 **Bardzo słaba forma** ({wartosc:+}) — częste porażki, brak skuteczności."
-    else:
-        return f"🔴 **Kryzys / bardzo słaby zespół** ({wartosc:+}) — fatalna forma, niezdolna do rywalizacji."
+
+
 
 
 print("\n\033[95m========== INTERPRETACJA POWER RATING ==========\033[0m")
-power_home = calculate_power_rating(fg)
-power_away = calculate_power_rating(fgosc)
+power_home = calculate_power_score(fg)
+power_away = calculate_power_score(fgosc)
 
-print(f"Power Rating Gospodarza: {power_home if power_home is not None else 'brak danych'} → {interpretuj_power_rating(power_home)}")
-print(f"Power Rating Gościa: {power_away if power_away is not None else 'brak danych'} → {interpretuj_power_rating(power_away)}")
+print(f"Power Rating Gospodarza: {power_home if power_home is not None else 'brak danych'} → {interpretuj_power_score(power_home)}")
+print(f"Power Rating Gościa: {power_away if power_away is not None else 'brak danych'} → {interpretuj_power_score(power_away)}")
 
 
 
