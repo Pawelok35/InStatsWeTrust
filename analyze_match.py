@@ -105,10 +105,8 @@ def get_recent_form(druzyna, typ, kolejka):
 
         xg_val = None
         if not opp_match.empty:
-            if opp_typ == 'home':
-                xg_val = opp_match.iloc[0].get('xG')
-            else:
-                xg_val = opp_match.iloc[0].get('xG_Opponent')
+           xg_val = opp_match.iloc[0].get('xG')
+
 
         if pd.notna(xg_val):
             xg_przeciwnikow.append(xg_val)
