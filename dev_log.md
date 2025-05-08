@@ -163,3 +163,25 @@
 - Simplified logic for clarity by pulling `Śr. Punkty (5m)` directly from recent form instead of relying on derived scores.
 
 ---
+
+## 📅 2025-05-08
+
+### ✅ Completed:
+- Added **option 5** to the menu: analyze all played rounds with results and xPTS.
+- Implemented filtering logic to only display matches where **point difference ≥ 1**, either positive or negative.
+- Refactored `analyze_all_played_rounds_with_results_xpts()` to:
+  - loop through all played rounds,
+  - calculate xPTS dynamically using Poisson distribution,
+  - compute average points from last 5 home/away matches,
+  - show signal and prediction results in a clean terminal format.
+- Highlighted point difference (`RÓŻNICA`) in **bold white** when significant (abs ≥ 1), aligned within fixed-width layout.
+- Suppressed display of matches with insignificant differences to focus user attention on strong betting opportunities.
+
+### 🐞 Fixed:
+- Handled `NaN` values for not-yet-played matches (e.g., round 36) to prevent `ValueError` during integer conversion.
+- Resolved alignment issues in terminal output, ensuring all fields (match, prediction, signal, diff, result) line up consistently.
+- Avoided terminal errors with a guard clause: `if pd.isna(goals_home) or pd.isna(goals_away): continue`.
+- Added summary stats at the end: total correct tips, incorrect tips, and success rate (%) for filtered matches only.
+
+---
+

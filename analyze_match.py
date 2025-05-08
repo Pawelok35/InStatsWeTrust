@@ -477,6 +477,202 @@ def ocena_sygnalu(p1, p2):
     else:
         return "\033[91m🚫 Brak wyraźnej przewagi – lepiej odpuścić (1/5)\033[0m"
 
+def is_prediction_correct(pred_team, home, away, home_goals, away_goals):
+    if home_goals > away_goals:
+        actual_winner = home
+    elif home_goals < away_goals:
+        actual_winner = away
+    else:
+        actual_winner = "Remis"
+    return pred_team == actual_winner
+
+
+from scipy.stats import poisson
+import numpy as np
+
+def calculate_xpts(xg_for, xg_against, max_goals=6):
+    prob_matrix = np.zeros((max_goals + 1, max_goals + 1))
+    for i in range(max_goals + 1):
+        for j in range(max_goals + 1):
+            prob_matrix[i, j] = poisson.pmf(i, xg_for) * poisson.pmf(j, xg_against)
+    p_win = np.sum(np.tril(prob_matrix, -1))
+    p_draw = np.sum(np.diag(prob_matrix))
+    xpts = 3 * p_win + 1 * p_draw
+    return round(xpts, 3)
+
+def get_recent_form_with_xpts(druzyna, typ, kolejka):
+    norm_name = normalize_team_name(druzyna)
+    filt = (df_long['TEAM'].apply(normalize_team_name) == norm_name) & \
+           (df_long['Type'].str.lower() == typ.lower()) & \
+           (df_long['Round'] < kolejka)
+    ostatnie = df_long[filt].sort_values(by='Round', ascending=False).head(5)
+
+    sr_pkt = round(float(ostatnie['Points'].mean()), 2) if not ostatnie.empty else 0
+    sr_xg = round(ostatnie['xG'].mean(), 2) if not ostatnie.empty and 'xG' in ostatnie.columns else 0
+    sr_xga = round(ostatnie['xG_Opponent'].mean(), 2) if not ostatnie.empty and 'xG_Opponent' in ostatnie.columns else 0
+    dom_count = int(ostatnie['Domination'].sum()) if 'Domination' in ostatnie.columns else 0
+    momentum = 1 if ostatnie.shape[0] >= 2 and ostatnie.iloc[0]['Points'] > ostatnie.iloc[-1]['Points'] else 0
+    xpts_list = [
+        calculate_xpts(row['xG'], row['xG_Opponent'])
+        for _, row in ostatnie.iterrows()
+        if pd.notna(row['xG']) and pd.notna(row['xG_Opponent'])
+    ]
+    xpts = round(sum(xpts_list) / len(xpts_list), 3) if xpts_list else 0
+
+    return {
+        'Śr. Punkty (5m)': sr_pkt,
+        'Śr. xG (5m)': sr_xg,
+        'Śr. xGA (5m)': sr_xga,
+        'Domination Count': dom_count,
+        'Momentum': momentum,
+        'Śr. xPTS (5m)': xpts
+    }
+
+def analyze_round_with_results_xpts(kolejka):
+    df_kolejka = df_matches[df_matches['Round'] == kolejka]
+    results = []
+    for _, row in df_kolejka.iterrows():
+        home = row['Home']
+        away = row['Away']
+        goals_home = row['Goals_For']
+        goals_away = row['Goals_Against']
+        wynik_str = f"{goals_home}–{goals_away}"
+
+        # Pobierz formę z ostatnich 5 meczów
+        form_home = get_recent_form_with_xpts(home, 'home', kolejka)
+        form_away = get_recent_form_with_xpts(away, 'away', kolejka)
+
+        # Średnie punkty
+        avg_pts_home = form_home.get('Śr. Punkty (5m)', 0)
+        avg_pts_away = form_away.get('Śr. Punkty (5m)', 0)
+        pts_diff = round(avg_pts_home - avg_pts_away, 2)
+        
+
+        # Dodatkowo możemy dalej liczyć PowerRating (jeśli chcesz używać sygnałów)
+        pr_home = calculate_power_score(form_home)
+        pr_away = calculate_power_score(form_away)
+        signal = ocena_sygnalu(pr_home, pr_away)
+
+        prediction = home if pts_diff > 0 else away if pts_diff < 0 else "Remis"
+        tip_correct = is_prediction_correct(prediction, home, away, goals_home, goals_away)
+
+        # Wypisz w konsoli
+        status = "✅" if tip_correct else "❌"
+
+        # Sformatuj wynik jako liczby całkowite + myślnik
+        wynik_str = f"{int(goals_home)}–{int(goals_away)}"
+
+        # Wyjustowana etykieta i liczba różnicy
+        roznica_label = "RÓŻNICA:"
+        roznica_text = f"{roznica_label:<10} {pts_diff:>4.1f}"
+
+        # Koloruj całość (label + liczba), jeśli różnica ≥ 1
+        if abs(pts_diff) >= 1:
+            highlighted_roznica = f"\033[1;37m{roznica_text:<17}\033[0m"
+        else:
+            highlighted_roznica = f"{roznica_text:<17}"
+
+        # Wyrównany i przejrzysty print
+        print(
+            f"{home:<20} vs {away:<20} → {prediction:<15} || "
+            f"Sygnał: {signal:<50} || "
+            f"{highlighted_roznica}|| Wynik: {wynik_str:<5} {status}"
+        )
+
+
+
+
+        # Zapisz do tabeli
+        results.append({
+            "Match": f"{home} vs {away}",
+            "Predicted": prediction,
+            "Signal": signal,
+            "PointDiff (5m avg)": pts_diff,
+            "Result": wynik_str,
+            "TipCorrect": "✅" if tip_correct else "❌"
+        })
+
+    return pd.DataFrame(results)
+
+def analyze_all_played_rounds_with_results_xpts():
+    all_rounds = sorted(df_matches['Round'].unique())
+    full_results = []
+
+    print("\n📊 ANALIZA WSZYSTKICH KOLEJEK (tylko mecze z różnicą punktów ≥ 1)\n")
+
+    for kolejka in all_rounds:
+        df_kolejka = df_matches[df_matches['Round'] == kolejka]
+        any_printed = False  # flaga: czy pokazano mecz z tej kolejki
+
+        for _, row in df_kolejka.iterrows():
+            home = row['Home']
+            away = row['Away']
+            goals_home = row['Goals_For']
+            goals_away = row['Goals_Against']
+            
+            if pd.isna(goals_home) or pd.isna(goals_away):
+                continue
+
+            wynik_str = f"{int(goals_home)}–{int(goals_away)}"
+
+            form_home = get_recent_form_with_xpts(home, 'home', kolejka)
+            form_away = get_recent_form_with_xpts(away, 'away', kolejka)
+
+            avg_pts_home = form_home.get('Śr. Punkty (5m)', 0)
+            avg_pts_away = form_away.get('Śr. Punkty (5m)', 0)
+            pts_diff = round(avg_pts_home - avg_pts_away, 2)
+
+            # ⛔️ Pomiń, jeśli nie ma różnicy ≥ 1
+            if abs(pts_diff) < 1:
+                continue
+
+            # tylko jeśli coś pokazujemy — pokaż nagłówek kolejki
+            if not any_printed:
+                print(f"\n📍 Kolejka {kolejka}\n")
+                any_printed = True
+
+            pr_home = calculate_power_score(form_home)
+            pr_away = calculate_power_score(form_away)
+            signal = ocena_sygnalu(pr_home, pr_away)
+
+            prediction = home if pts_diff > 0 else away if pts_diff < 0 else "Remis"
+            tip_correct = is_prediction_correct(prediction, home, away, goals_home, goals_away)
+            status = "✅" if tip_correct else "❌"
+
+            roznica_label = "RÓŻNICA:"
+            roznica_text = f"{roznica_label:<10} {pts_diff:>4.1f}"
+
+            highlighted_roznica = f"\033[1;37m{roznica_text:<17}\033[0m"
+
+            print(
+                f"{home:<20} vs {away:<20} → {prediction:<15} || "
+                f"Sygnał: {signal:<50} || "
+                f"{highlighted_roznica}|| Wynik: {wynik_str:<5} {status}"
+            )
+
+            full_results.append({
+                "Round": kolejka,
+                "Match": f"{home} vs {away}",
+                "Predicted": prediction,
+                "Signal": signal,
+                "PointDiff (5m avg)": pts_diff,
+                "Result": wynik_str,
+                "TipCorrect": status
+            })
+    # PODSUMOWANIE trafień
+    correct = sum(1 for r in full_results if r["TipCorrect"] == "✅")
+    incorrect = sum(1 for r in full_results if r["TipCorrect"] == "❌")
+    total = correct + incorrect
+    accuracy = round(100 * correct / total, 1) if total > 0 else 0.0
+
+    print("\n📈 PODSUMOWANIE TYPÓW")
+    print(f"🎯 Trafione typy:     {correct}")
+    print(f"❌ Nietrafione typy:  {incorrect}")
+    print(f"📊 Skuteczność:       {accuracy}%")
+
+
+    return pd.DataFrame(full_results)
+
 
 
 
@@ -631,8 +827,12 @@ while True:
     print("1. Przeanalizować jeden mecz ręcznie")
     print("2. Przeanalizować całą kolejkę")
     print("3. Wygenerować Power Ranking przed daną kolejką")
+    print("4. Przeanalizuj kolejkę z wynikami i xPTS")
+    print("5. Przeanalizuj wszystkie kolejki z wynikami i xPTS")
     print("0. Wyjście")
-    wybor = input("Wybierz opcję (0, 1, 2 lub 3): ").strip()
+
+
+    wybor = input("Wybierz opcję (0, 1, 2, 3, 4 lub 5): ").strip()
 
     if wybor == "1":
         gospodarz = wybierz_druzyne("Podaj nazwę drużyny gospodarzy: ")
@@ -648,6 +848,15 @@ while True:
     elif wybor == "3":
         kolejka = wybierz_kolejke("Podaj numer kolejki (Power Ranking będzie liczony na podstawie wcześniejszych danych): ")
         generate_power_ranking(kolejka)
+    
+    elif wybor == "4":
+        kolejka = wybierz_kolejke("Podaj numer kolejki do analizy z wynikami: ")
+        analyze_round_with_results_xpts(kolejka)
+
+    elif wybor == "5":
+        analyze_all_played_rounds_with_results_xpts()
+
+
 
     elif wybor == "0":
         print("Zakończono działanie programu. 👋")
