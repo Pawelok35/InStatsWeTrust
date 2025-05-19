@@ -185,3 +185,20 @@
 
 ---
 
+## 📅 2025-05-09
+
+### ✅ Completed:
+- Added **weighted match filtering logic** using:
+  - `avg points difference` (60% weight),
+  - `xPTS difference` (40% weight),
+  - with a configurable threshold of `1.5`.
+- Applied the filter to both:
+  - `analyze_round()` — analysis of future rounds without results,
+  - `analyze_all_played_rounds_with_results_xpts()` — full season backtest.
+- Ensured only **valuable matches** are displayed in option 5 (full analysis) — fully filtered output.
+
+### 🧠 Logic:
+- Match is only displayed if the combined difference of recent form (points + xPTS) is statistically significant.
+- Helps eliminate noise, highlight true dominance, and improve prediction quality.
+
+---
