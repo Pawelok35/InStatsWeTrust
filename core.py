@@ -90,7 +90,7 @@ def generate_power_ranking(kolejka):
 
 
 # === KOLEJKA Z WYNIKAMI ===
-def analyze_round_with_results_xpts(kolejka, filtruj_silne_sygnaly=False):
+def analyze_round_with_results_xpts(kolejka, filtruj_silne_sygnaly=False, statystyki=None):
     from data_loader import load_data, get_recent_form_with_xpts
     from utils import calculate_power_score, ocena_sygnalu
 
@@ -103,7 +103,6 @@ def analyze_round_with_results_xpts(kolejka, filtruj_silne_sygnaly=False):
         goals_home = row['Goals_For']
         goals_away = row['Goals_Against']
 
-
         form_home = get_recent_form_with_xpts(df_long, home, 'home', kolejka)
         form_away = get_recent_form_with_xpts(df_long, away, 'away', kolejka)
 
@@ -112,11 +111,54 @@ def analyze_round_with_results_xpts(kolejka, filtruj_silne_sygnaly=False):
         diff = round(pr_home - pr_away, 1) if pr_home is not None and pr_away is not None else None
         signal = ocena_sygnalu(pr_home, pr_away)
 
-        # Filtrowanie na żądanie
+        # Filtrowanie tylko silnych sygnałów
         if filtruj_silne_sygnaly and not ("(4/5)" in signal or "(5/5)" in signal):
             continue
 
-        # Wynik meczu
         wynik = f"{int(goals_home)}–{int(goals_away)}" if pd.notna(goals_home) and pd.notna(goals_away) else "brak"
-
         print(f"{home:<21} vs {away:<21} → {signal:<60} || RÓŻNICA: {diff:>5} || Wynik: {wynik}")
+
+        # Liczenie skuteczności
+        if statystyki is not None and pd.notna(goals_home) and pd.notna(goals_away):
+            statystyki['typy'] += 1
+            if "gospodarza" in signal and goals_home > goals_away:
+                statystyki['trafione'] += 1
+            elif "gościa" in signal and goals_home < goals_away:
+                statystyki['trafione'] += 1
+
+def analyze_round_with_results_xpts_v2(kolejka, filtruj_silne_sygnaly=False, statystyki=None):
+    from data_loader import load_data, get_recent_form_with_xpts
+    from utils import calculate_power_score_v2, ocena_sygnalu
+    import pandas as pd
+
+    df_matches, df_long, *_ = load_data()
+    df_kolejka = df_matches[df_matches['Round'] == kolejka]
+
+    for _, row in df_kolejka.iterrows():
+        home = row['Home']
+        away = row['Away']
+        goals_home = row['Goals_For']
+        goals_away = row['Goals_Against']
+
+        form_home = get_recent_form_with_xpts(df_long, home, 'home', kolejka)
+        form_away = get_recent_form_with_xpts(df_long, away, 'away', kolejka)
+
+
+        pr_home = calculate_power_score_v2(form_home)
+        pr_away = calculate_power_score_v2(form_away)
+        diff = round(pr_home - pr_away, 1) if pr_home is not None and pr_away is not None else None
+        signal = ocena_sygnalu(pr_home, pr_away)
+
+        # Filtrowanie tylko silnych sygnałów
+        if filtruj_silne_sygnaly and not ("(4/5)" in signal or "(5/5)" in signal):
+            continue
+
+        wynik = f"{int(goals_home)}–{int(goals_away)}" if pd.notna(goals_home) and pd.notna(goals_away) else "brak"
+        print(f"{home:<21} vs {away:<21} → {signal:<60} || RÓŻNICA: {diff:>5} || Wynik: {wynik}")
+
+        if statystyki is not None and pd.notna(goals_home) and pd.notna(goals_away):
+            statystyki['typy'] += 1
+            if "gospodarza" in signal and goals_home > goals_away:
+                statystyki['trafione'] += 1
+            elif "gościa" in signal and goals_home < goals_away:
+                statystyki['trafione'] += 1
