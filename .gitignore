@@ -27,3 +27,13 @@ data/tmp/
 # OS files
 .DS_Store
 Thumbs.db
+
+
+Add-Content .gitignore "`n# --- ISWT data ignores ---"
+Add-Content .gitignore "data/raw/**"
+Add-Content .gitignore "data/processed/*.parquet"
+Add-Content .gitignore "data/processed/*.summary.json"
+Add-Content .gitignore "__pycache__/"
+Add-Content .gitignore "*.pyc"
+Add-Content .gitignore ".ipynb_checkpoints/"
+Add-Content .gitignore ".venv/"

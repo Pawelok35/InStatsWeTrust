@@ -1,168 +1,244 @@
+"""
+Season-level EPA & Core 12 metrics aggregation
+Project: In Stats We Trust – Main
+
+CLI:
+    python etl/transform_epa_season.py <input_clean_pbp.(parquet|csv)> <out_dir>
+
+We assume input is the CLEAN play-by-play from etl/transform.py with columns like:
+- game_id, play_id, season, week, game_date
+- posteam, defteam, home_team, away_team
+- down, ydstogo, yardline_100, yards_gained, epa, success
+- is_pass, is_rush, is_dropback, touchdown, interception, fumble, st_play
+
+This script computes season-level team summaries for offense/defense and writes:
+- epa_offense_summary_<season>_season.csv
+- epa_defense_summary_<season>_season.csv
+- power_signal_<season>_season.csv (simple signal = off_epa/play − def_epa_allowed/play)
+- matchups_<season>_season.csv (unique season matchups extracted from PBP)
+"""
+from __future__ import annotations
+
+import sys
 from pathlib import Path
-import pandas as pd
+from typing import Optional, Tuple
+
 import numpy as np
+import pandas as pd
 
-SEASON = 2024
 
-def safe_rate(s: pd.Series) -> float:
-    denom = s.size
-    return float(s.sum() / denom) if denom else 0.0
+# ------------------------------ Helpers ------------------------------------
 
-def load_pbp_all(raw_dir: Path, season: int) -> pd.DataFrame:
-    all_path = raw_dir / f"pbp_{season}_all.csv"
-    if all_path.exists():
-        return pd.read_csv(all_path, low_memory=False)
-    # fallback: łącz z tygodni
-    parts = []
-    for wk in range(1, 19):
-        p = raw_dir / f"pbp_{season}_week_{wk}.csv"
-        if p.exists():
-            parts.append(pd.read_csv(p, low_memory=False))
-    if not parts:
-        raise FileNotFoundError(f"Brak danych PBP dla {season} w {raw_dir}")
-    return pd.concat(parts, ignore_index=True)
+def _read_any(path: Path) -> pd.DataFrame:
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        return pd.read_parquet(path)
+    if path.suffix.lower() == ".csv":
+        # more robust CSV read
+        return pd.read_csv(path, low_memory=False)
+    raise ValueError(f"Unsupported input: {path.suffix}")
 
-def main():
-    root = Path(__file__).resolve().parents[1]
-    raw_dir = root / "data" / "raw"
-    processed_dir = root / "data" / "processed"
-    processed_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"📥 Wczytuję PBP scalone dla {SEASON}…")
-    pbp = load_pbp_all(raw_dir, SEASON)
+def _save_csv(df: pd.DataFrame, out_dir: Path, name: str) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = out_dir / name
+    df.to_csv(p, index=False)
+    return p
 
-    # Normalizacja typów
-    for col in ["epa", "yards_gained", "down", "week"]:
-        if col in pbp.columns:
-            pbp[col] = pd.to_numeric(pbp[col], errors="coerce")
 
-    # Tylko akcje z przypisaną drużyną ataku
-    plays = pbp[pbp["posteam"].notna()].copy()
-    plays["success"] = plays["epa"].fillna(0) > 0
-    plays["explosive"] = plays["yards_gained"].fillna(0) >= 20
-    plays["early_down"] = plays["down"].isin([1, 2])
-    plays["third_down_success"] = (plays["down"] == 3) & (plays["epa"].fillna(0) > 0)
+def _ensure_cols(df: pd.DataFrame, cols) -> pd.DataFrame:
+    for c in cols:
+        if c not in df.columns:
+            df[c] = np.nan
+    return df
 
-    # =======================
-    # 1) OFFENSE – sezon per team
-    # =======================
-    off = (
-        plays.groupby("posteam")
-        .agg(
-            plays=("epa", "size"),
-            avg_epa=("epa", "mean"),
-            median_epa=("epa", "median"),
-            success_rate=("success", safe_rate),
-            explosive_plays=("explosive", "sum"),
-            explosive_rate=("explosive", safe_rate),
-            total_yards=("yards_gained", "sum"),
-            early_down_epa=("epa", lambda s: s[plays.loc[s.index, "early_down"]].mean()),
-            third_down_sr=("third_down_success", safe_rate),
-        )
-        .reset_index()
-        .rename(columns={"posteam": "team"})
-        .sort_values(["avg_epa", "success_rate"], ascending=[False, False])
+
+def _explosive_mask(df: pd.DataFrame) -> pd.Series:
+    yd = pd.to_numeric(df.get("yards_gained"), errors="coerce").fillna(0)
+    is_pass = pd.to_numeric(df.get("is_pass"), errors="coerce").fillna(0).astype(int)
+    is_rush = pd.to_numeric(df.get("is_rush"), errors="coerce").fillna(0).astype(int)
+    return ((is_pass == 1) & (yd >= 20)) | ((is_rush == 1) & (yd >= 10))
+
+
+def _group_offense(df: pd.DataFrame) -> pd.DataFrame:
+    # Filter: exclude special teams for offensive profile (optional, safer)
+    st = pd.to_numeric(df.get("st_play"), errors="coerce").fillna(0).astype(int)
+    off = df.loc[st == 0].copy()
+
+    # Masks
+    epa = pd.to_numeric(off.get("epa"), errors="coerce")
+    success = pd.to_numeric(off.get("success"), errors="coerce")
+    down = pd.to_numeric(off.get("down"), errors="coerce")
+    y100 = pd.to_numeric(off.get("yardline_100"), errors="coerce")
+
+    is_pass = pd.to_numeric(off.get("is_pass"), errors="coerce").fillna(0).astype(int)
+    is_rush = pd.to_numeric(off.get("is_rush"), errors="coerce").fillna(0).astype(int)
+    inter = pd.to_numeric(off.get("interception"), errors="coerce").fillna(0).astype(int)
+    fumble = pd.to_numeric(off.get("fumble"), errors="coerce").fillna(0).astype(int)
+
+    explosive = _explosive_mask(off)
+
+    grp = off.groupby(["season", "posteam"], dropna=False)
+
+    def agg_fn(g: pd.DataFrame) -> pd.Series:
+        e = pd.to_numeric(g["epa"], errors="coerce")
+        s = pd.to_numeric(g["success"], errors="coerce")
+        d = pd.to_numeric(g["down"], errors="coerce")
+        y = pd.to_numeric(g["yardline_100"], errors="coerce")
+        ip = pd.to_numeric(g.get("is_pass"), errors="coerce").fillna(0).astype(int)
+        ir = pd.to_numeric(g.get("is_rush"), errors="coerce").fillna(0).astype(int)
+        inter = pd.to_numeric(g.get("interception"), errors="coerce").fillna(0).astype(int)
+        fmb = pd.to_numeric(g.get("fumble"), errors="coerce").fillna(0).astype(int)
+        yards = pd.to_numeric(g.get("yards_gained"), errors="coerce").fillna(0)
+        expl = _explosive_mask(g)
+
+        out = {
+            "plays": int(len(g)),
+            "avg_epa": float(e.mean(skipna=True)),
+            "median_epa": float(e.median(skipna=True)),
+            "success_rate": float(s.mean(skipna=True)),
+            "explosive_plays": int(expl.sum()),
+            "explosive_rate": float(expl.mean(skipna=True)),
+            "total_yards": float(yards.sum()),
+            # Core 12 pieces
+            "early_down_epa": float(e[d.isin([1, 2])].mean(skipna=True)),
+            "late_down_epa": float(e[d.isin([3, 4])].mean(skipna=True)),
+            "third_down_sr": float(s[d == 3].mean(skipna=True)),
+            "fourth_down_sr": float(s[d == 4].mean(skipna=True)),
+            "red_zone_epa": float(e[y <= 20].mean(skipna=True)),
+            "pass_epa_per_play": float(e[ip == 1].mean(skipna=True)),
+            "rush_epa_per_play": float(e[ir == 1].mean(skipna=True)),
+            # Turnover EPA (sum EPA on plays flagged as turnover proxies)
+            "turnover_epa": float(e[(inter == 1) | (fmb == 1)].sum(skipna=True)),
+            # Field position (lower is better; offense closer to EZ)
+            "avg_start_yardline_100": float(y.mean(skipna=True)),
+        }
+        return pd.Series(out)
+
+    out = grp.apply(agg_fn).reset_index().rename(columns={"posteam": "team"})
+    return out
+
+
+def _group_defense(df: pd.DataFrame) -> pd.DataFrame:
+    st = pd.to_numeric(df.get("st_play"), errors="coerce").fillna(0).astype(int)
+    deff = df.loc[st == 0].copy()
+
+    grp = deff.groupby(["season", "defteam"], dropna=False)
+
+    def agg_fn(g: pd.DataFrame) -> pd.Series:
+        e = pd.to_numeric(g["epa"], errors="coerce")
+        s = pd.to_numeric(g["success"], errors="coerce")
+        d = pd.to_numeric(g["down"], errors="coerce")
+        y = pd.to_numeric(g["yardline_100"], errors="coerce")
+        ip = pd.to_numeric(g.get("is_pass"), errors="coerce").fillna(0).astype(int)
+        ir = pd.to_numeric(g.get("is_rush"), errors="coerce").fillna(0).astype(int)
+        inter = pd.to_numeric(g.get("interception"), errors="coerce").fillna(0).astype(int)
+        fmb = pd.to_numeric(g.get("fumble"), errors="coerce").fillna(0).astype(int)
+        yards = pd.to_numeric(g.get("yards_gained"), errors="coerce").fillna(0)
+        expl = _explosive_mask(g)
+
+        out = {
+            "plays_allowed": int(len(g)),
+            "avg_epa_allowed": float(e.mean(skipna=True)),
+            "median_epa_allowed": float(e.median(skipna=True)),
+            "success_rate_allowed": float(s.mean(skipna=True)),
+            "explosive_allowed": int(expl.sum()),
+            "explosive_rate_allowed": float(expl.mean(skipna=True)),
+            "yards_allowed": float(yards.sum()),
+            # Core 12 (allowed)
+            "early_down_epa_allowed": float(e[d.isin([1, 2])].mean(skipna=True)),
+            "late_down_epa_allowed": float(e[d.isin([3, 4])].mean(skipna=True)),
+            "third_down_sr_allowed": float(s[d == 3].mean(skipna=True)),
+            "fourth_down_sr_allowed": float(s[d == 4].mean(skipna=True)),
+            "red_zone_epa_allowed": float(e[y <= 20].mean(skipna=True)),
+            "pass_epa_per_play_allowed": float(e[ip == 1].mean(skipna=True)),
+            "rush_epa_per_play_allowed": float(e[ir == 1].mean(skipna=True)),
+            # Turnovers forced (EPA from opponent turnovers — negative for OFF, positive benefit DEF)
+            "turnover_epa_forced": float(e[(inter == 1) | (fmb == 1)].sum(skipna=True)),
+            # Field position faced (higher is worse for DEF because OFF farther from EZ)
+            "avg_start_yardline_100_faced": float(y.mean(skipna=True)),
+        }
+        return pd.Series(out)
+
+    out = grp.apply(agg_fn).reset_index().rename(columns={"defteam": "team"})
+    return out
+
+
+def _build_matchups(df: pd.DataFrame) -> pd.DataFrame:
+    games = df[["game_id", "home_team", "away_team", "season"]].drop_duplicates()
+    games = games.sort_values(["season", "home_team", "away_team", "game_id"])  # stable
+    return games
+
+
+# ------------------------------ Main ---------------------------------------
+
+def run(input_path: Path, out_dir: Path) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    df = _read_any(input_path)
+    need = [
+        "season", "posteam", "defteam", "home_team", "away_team",
+        "down", "ydstogo", "yardline_100", "yards_gained", "epa",
+        "success", "is_pass", "is_rush", "interception", "fumble", "st_play",
+    ]
+    df = _ensure_cols(df, need)
+
+    # Coerce crucial types once
+    df["season"] = pd.to_numeric(df["season"], errors="coerce").astype("Int64")
+
+    # OFF & DEF tables
+    off = _group_offense(df)
+    deff = _group_defense(df)
+
+    # Power signal (simple version)
+    join = off.merge(deff[["season", "team", "avg_epa_allowed"]], on=["season", "team"], how="left")
+    join["power_signal"] = join["avg_epa"] - join["avg_epa_allowed"]
+    power = join[["season", "team", "avg_epa", "avg_epa_allowed", "power_signal"]].sort_values(
+        ["season", "power_signal"], ascending=[True, False]
     )
-    for c in ["avg_epa","median_epa","success_rate","explosive_rate","early_down_epa","third_down_sr"]:
-        off[c] = off[c].astype(float).round(4)
-    off["season"] = SEASON
-    out_off = processed_dir / f"epa_offense_summary_{SEASON}_season.csv"
-    off.to_csv(out_off, index=False)
-    print(f"✅ Zapisano: {out_off}")
 
-    # =======================
-    # 2) DEFENSE – sezon per team
-    # =======================
-    if "defteam" in plays.columns:
-        defn = (
-            plays.groupby("defteam")
-            .agg(
-                plays=("epa", "size"),
-                avg_epa_allowed=("epa", "mean"),           # im niżej, tym lepiej
-                median_epa_allowed=("epa", "median"),
-                success_rate_allowed=("success", safe_rate),
-                explosive_allowed=("explosive", "sum"),
-                explosive_rate_allowed=("explosive", safe_rate),
-                yards_allowed=("yards_gained", "sum"),
-            )
-            .reset_index()
-            .rename(columns={"defteam": "team"})
-            .sort_values(["avg_epa_allowed", "success_rate_allowed"], ascending=[True, True])
-        )
-        for c in ["avg_epa_allowed","median_epa_allowed","success_rate_allowed","explosive_rate_allowed"]:
-            defn[c] = defn[c].astype(float).round(4)
-        defn["season"] = SEASON
-        out_def = processed_dir / f"epa_defense_summary_{SEASON}_season.csv"
-        defn.to_csv(out_def, index=False)
-        print(f"✅ Zapisano: {out_def}")
+    # Matchups
+    matchups = _build_matchups(df)
+
+    # Persist (derive season for filenames)
+    seasons = sorted(off["season"].dropna().unique().tolist())
+    if len(seasons) == 1:
+        season = int(seasons[0])
+        off_p = _save_csv(off, out_dir, f"epa_offense_summary_{season}_season.csv")
+        deff_p = _save_csv(deff, out_dir, f"epa_defense_summary_{season}_season.csv")
+        pow_p = _save_csv(power, out_dir, f"power_signal_{season}_season.csv")
+        mat_p = _save_csv(matchups, out_dir, f"matchups_{season}_season.csv")
+        print(f"📥 Wczytuję PBP scalone dla {season}…")
+        print(f"✅ Zapisano: {off_p}")
+        print(f"✅ Zapisano: {deff_p}")
+        print(f"✅ Zapisano: {mat_p}")
+        print(f"🏆 Zapisano ranking: {pow_p}")
     else:
-        defn = pd.DataFrame(columns=["team"])  # pusty fallback
+        # Multi-season safety: write generic filenames
+        off_p = _save_csv(off, out_dir, "epa_offense_summary_seasons.csv")
+        deff_p = _save_csv(deff, out_dir, "epa_defense_summary_seasons.csv")
+        pow_p = _save_csv(power, out_dir, "power_signal_seasons.csv")
+        mat_p = _save_csv(matchups, out_dir, "matchups_seasons.csv")
+        print("📥 Wczytano wiele sezonów…")
+        print(f"✅ Zapisano: {off_p}")
+        print(f"✅ Zapisano: {deff_p}")
+        print(f"✅ Zapisano: {mat_p}")
+        print(f"🏆 Zapisano ranking: {pow_p}")
 
-    # =======================
-    # 3) PER-GAME BOX + POWER SIGNAL
-    # =======================
-    # Mapowanie game_id -> home/away
-    game_teams = (
-        pbp.loc[pbp["home_team"].notna() & pbp["away_team"].notna(), ["game_id","home_team","away_team"]]
-        .drop_duplicates(subset=["game_id"])
-    )
+    return off, deff, power
 
-    # Offense per game (dla każdej drużyny w meczu)
-    per_game_off = (
-        plays.groupby(["game_id","posteam"])
-        .agg(
-            plays=("epa", "size"),
-            offense_epa=("epa", "mean"),
-            success_rate=("success", safe_rate),
-            explosive_rate=("explosive", safe_rate),
-            yards=("yards_gained", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"posteam": "team"})
-    )
 
-    # dołącz info home/away i pivot do jednego wiersza per mecz
-    per_game = per_game_off.merge(game_teams, on="game_id", how="left")
-    per_game["is_home"] = per_game.apply(lambda r: 1 if r["team"] == r["home_team"] else 0, axis=1)
+def _main(argv: Optional[list[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) < 2:
+        print("Usage: python etl/transform_epa_season.py <input_clean_pbp.(parquet|csv)> <out_dir>")
+        return 2
 
-    # rozdziel na home/away i sklej kolumny w jednym rekordzie per game_id
-    home = per_game[per_game["is_home"] == 1].copy()
-    away = per_game[per_game["is_home"] == 0].copy()
+    in_path = Path(argv[0])
+    out_dir = Path(argv[1])
+    if not in_path.exists():
+        raise FileNotFoundError(f"Input not found: {in_path}")
 
-    # wybieramy istotne kolumny i dodajemy sufiksy
-    home = home[["game_id","team","offense_epa","success_rate","explosive_rate","yards","plays"]]
-    away = away[["game_id","team","offense_epa","success_rate","explosive_rate","yards","plays"]]
-    home = home.add_prefix("home_"); home = home.rename(columns={"home_game_id":"game_id"})
-    away = away.add_prefix("away_"); away = away.rename(columns={"away_game_id":"game_id"})
+    run(in_path, out_dir)
+    return 0
 
-    matchup = home.merge(away, on="game_id", how="inner")
-
-    # Power Signal – prosty sygnał: (offense_epa_home - offense_epa_allowed_home)
-    # Tu zamiast allowed per-game (trudne z PBP) użyjemy sezonowego def summary (stabilniejsze):
-    power = defn[["team","avg_epa_allowed"]].rename(columns={"team":"team_def","avg_epa_allowed":"def_allowed"})
-    matchup = matchup.merge(power, left_on="home_team", right_on="team_def", how="left").drop(columns=["team_def"])
-    matchup = matchup.rename(columns={"def_allowed":"home_def_allowed"})
-    matchup = matchup.merge(power, left_on="away_team", right_on="team_def", how="left").drop(columns=["team_def"])
-    matchup = matchup.rename(columns={"def_allowed":"away_def_allowed"})
-
-    matchup["home_power_signal"] = matchup["home_offense_epa"] - matchup["home_def_allowed"]
-    matchup["away_power_signal"] = matchup["away_offense_epa"] - matchup["away_def_allowed"]
-
-    out_match = processed_dir / f"matchups_{SEASON}_season.csv"
-    matchup.to_csv(out_match, index=False)
-    print(f"✅ Zapisano: {out_match}")
-
-    # =======================
-    # 4) OFF + DEF JOIN – ranking sezonowy (wczesny Power Signal)
-    # =======================
-    if not defn.empty:
-        joined = off.merge(defn, on="team", how="inner")
-        joined["power_signal"] = joined["avg_epa"] - joined["avg_epa_allowed"]
-        joined = joined.sort_values("power_signal", ascending=False)
-        out_rank = processed_dir / f"power_signal_{SEASON}_season.csv"
-        joined.to_csv(out_rank, index=False)
-        print(f"🏆 Zapisano ranking: {out_rank}")
-        print(joined.head(10).to_string(index=False))
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(_main())
