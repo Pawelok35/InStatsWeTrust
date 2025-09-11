@@ -21,6 +21,29 @@ import pandas as pd
 import numpy as np
 
 
+# ---- Required input columns (raw) ----
+REQ_OFF = {
+    "team",
+    # season is optional in source; we'll fill from CLI if missing
+    "plays", "avg_epa", "median_epa", "success_rate",
+    "explosive_plays", "explosive_rate", "total_yards",
+    "early_down_epa", "late_down_epa",
+    "third_down_sr", "fourth_down_sr",
+    "red_zone_epa", "pass_epa_per_play", "rush_epa_per_play",
+    "turnover_epa", "avg_start_yardline_100",
+}
+
+REQ_DEF = {
+    "team",
+    "plays_allowed", "avg_epa_allowed", "median_epa_allowed",
+    "success_rate_allowed", "explosive_allowed", "explosive_rate_allowed",
+    "yards_allowed", "early_down_epa_allowed", "late_down_epa_allowed",
+    "third_down_sr_allowed", "fourth_down_sr_allowed",
+    "red_zone_epa_allowed", "pass_epa_per_play_allowed", "rush_epa_per_play_allowed",
+    "turnover_epa_forced", "avg_start_yardline_100_faced",
+}
+
+
 def load_tables(season: int, in_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     off_p = in_dir / f"epa_offense_summary_{season}_season.csv"
     def_p = in_dir / f"epa_defense_summary_{season}_season.csv"
@@ -33,7 +56,17 @@ def load_tables(season: int, in_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     return off, deff
 
 
+def _validate(df: pd.DataFrame, required: set[str], name: str) -> None:
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise KeyError(f"[{name}] Missing columns: {missing}")
+
+
 def rename_off(off: pd.DataFrame) -> pd.DataFrame:
+    # season optional; ensure present column (filled later)
+    if "season" not in off.columns:
+        off["season"] = np.nan
+    _validate(off, REQ_OFF, "offense")
     mapping = {
         "plays": "plays_off",
         "avg_epa": "off_epa_per_play",
@@ -56,6 +89,9 @@ def rename_off(off: pd.DataFrame) -> pd.DataFrame:
 
 
 def rename_def(deff: pd.DataFrame) -> pd.DataFrame:
+    if "season" not in deff.columns:
+        deff["season"] = np.nan
+    _validate(deff, REQ_DEF, "defense")
     mapping = {
         "plays_allowed": "plays_def",
         "avg_epa_allowed": "def_epa_per_play_allowed",
@@ -85,10 +121,31 @@ def build_core12(off_raw: pd.DataFrame, def_raw: pd.DataFrame, season: int) -> p
     for df in (off, deff):
         if "team" not in df.columns:
             raise KeyError("Both offense and defense tables must have 'team' column.")
-        if "season" not in df.columns:
-            df["season"] = season
+        # fill season if missing in source
+        if df["season"].isna().any():
+            df.loc[df["season"].isna(), "season"] = season
+        df["season"] = df["season"].astype(int)
 
+    # Merge
     df = off.merge(deff, on=["season", "team"], how="inner")
+
+    # Fill NaNs on critical numeric cols to avoid propagating NaN in net_* metrics
+    safe_cols = [
+        "off_epa_per_play","def_epa_per_play_allowed",
+        "early_down_epa_off","early_down_epa_allowed",
+        "late_down_epa_off","late_down_epa_allowed",
+        "third_down_sr_off","third_down_sr_allowed",
+        "fourth_down_sr_off","fourth_down_sr_allowed",
+        "explosive_rate_off","explosive_rate_allowed",
+        "red_zone_epa_off","red_zone_epa_allowed",
+        "pass_epa_per_play_off","rush_epa_per_play_off",
+        "turnover_epa_off","turnover_epa_forced",
+        "avg_start_yardline_100_off","avg_start_yardline_100_faced",
+        "plays_off","plays_def","total_yards_off","yards_allowed",
+    ]
+    for c in safe_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
     # Derived net metrics
     df["net_epa"] = df["off_epa_per_play"] - df["def_epa_per_play_allowed"]
@@ -102,11 +159,10 @@ def build_core12(off_raw: pd.DataFrame, def_raw: pd.DataFrame, season: int) -> p
     # Field position advantage: offense closer (lower yardline_100) and defense facing farther (higher)
     df["field_pos_advantage"] = -df["avg_start_yardline_100_off"] + df["avg_start_yardline_100_faced"]
     # Turnover balance: (off turnovers cost) vs (def turnovers gained)
-    df["turnover_epa_net"] = df["turnover_epa_off"].fillna(0) - df["turnover_epa_forced"].fillna(0)
+    df["turnover_epa_net"] = df["turnover_epa_off"] - df["turnover_epa_forced"]
 
     # Rank by net_epa (desc)
     df = df.sort_values(["season", "net_epa"], ascending=[True, False])
-    # Add position
     df["rank_net_epa"] = df.groupby("season")["net_epa"].rank(method="first", ascending=False).astype(int)
 
     # Order columns for readability
@@ -132,7 +188,6 @@ def build_core12(off_raw: pd.DataFrame, def_raw: pd.DataFrame, season: int) -> p
         # volume
         "plays_off", "plays_def", "total_yards_off", "yards_allowed",
     ]
-    # Keep any missing columns at the end
     final_cols = [c for c in col_order if c in df.columns] + [c for c in df.columns if c not in col_order]
     df = df[final_cols]
 
@@ -154,7 +209,10 @@ def main():
     core12.to_csv(out_path, index=False)
 
     # compact ranking
-    ranking = core12[["season", "team", "rank_net_epa", "net_epa", "off_epa_per_play", "def_epa_per_play_allowed"]]
+    ranking = core12[[
+        "season", "team", "rank_net_epa",
+        "net_epa", "off_epa_per_play", "def_epa_per_play_allowed"
+    ]].sort_values(["season", "net_epa"], ascending=[True, False])
     ranking_path = args.in_dir / f"power_ranking_{args.season}.csv"
     ranking.to_csv(ranking_path, index=False)
 
