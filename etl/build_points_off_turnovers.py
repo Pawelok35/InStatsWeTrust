@@ -13,23 +13,15 @@ def compute_play_points(row):
     import math
 
     def flag(col):
-        """Zwraca 1 lub 0 z dowolnego typu (NaN/None/bool/int/str)."""
         v = row.get(col, 0)
-        if v is None:
-            return 0
-        if isinstance(v, float) and math.isnan(v):
-            return 0
-        if isinstance(v, bool):
-            return 1 if v else 0
-        if isinstance(v, (int,)):
-            return 1 if v != 0 else 0
-        if isinstance(v, float):
-            return 1 if v != 0.0 else 0
+        if v is None: return 0
+        if isinstance(v, float) and math.isnan(v): return 0
+        if isinstance(v, bool): return 1 if v else 0
+        if isinstance(v, int): return 1 if v != 0 else 0
+        if isinstance(v, float): return 1 if v != 0.0 else 0
         s = str(v).strip().lower()
-        if s in {"1", "true", "yes", "y"}:
-            return 1
-        if s in {"0", "false", "no", "n", ""}:
-            return 0
+        if s in {"1","true","yes","y"}: return 1
+        if s in {"0","false","no","n",""}: return 0
         return 0
 
     def text(col):
@@ -46,30 +38,41 @@ def compute_play_points(row):
         if team == away: return home
         return None
 
-    # --- TOUCHDOWN (6) ---
+    # --- PRIORYTET: delta punktów jeśli mamy total_* + prev_* ---
+    th = row.get("total_home_score"); ta = row.get("total_away_score")
+    ph = row.get("prev_total_home_score"); pa = row.get("prev_total_away_score")
+    have_deltas = (th is not None and ta is not None and ph is not None and pa is not None)
+    if have_deltas and not (isinstance(ph, float) and math.isnan(ph)) and not (isinstance(pa, float) and math.isnan(pa)):
+        try:
+            dh = int(th - ph)
+            da = int(ta - pa)
+            if dh > 0 and da == 0:
+                return dh, home
+            if da > 0 and dh == 0:
+                return da, away
+            if dh == 0 and da == 0:
+                return 0, None
+            return dh + da, None  # edge case
+        except Exception:
+            pass  # fallback poniżej
+
+    # --- FALLBACK: z flag akcji (TD/FG/XP/2PT/Safety) ---
     td_flag = flag("touchdown") or flag("rush_touchdown") or flag("pass_touchdown")
     td_team = row.get("td_team")
     if td_flag or (isinstance(td_team, str) and td_team):
         pts += 6
         scorer = td_team if (isinstance(td_team, str) and td_team) else posteam
 
-    # --- FIELD GOAL (3) ---
     if text("field_goal_result") in {"made", "good", "success"}:
         pts += 3; scorer = posteam
 
-    # --- EXTRA POINT (1) ---
     if text("extra_point_result") in {"good", "made", "success"}:
         pts += 1; scorer = posteam
 
-    # --- TWO-POINT (2) ---
     if text("two_point_conv_result") in {"success", "good", "converted"}:
-        if flag("defensive_two_point_attempt") == 1:
-            scorer = defteam
-        else:
-            scorer = posteam
         pts += 2
+        scorer = defteam if flag("defensive_two_point_attempt") == 1 else posteam
 
-    # --- SAFETY (2) ---
     if flag("safety") == 1:
         pts += 2; scorer = defteam if defteam else opp(posteam)
 
@@ -198,6 +201,19 @@ def compute_pot(df: pd.DataFrame, season: int):
 
     df = detect_takeaways(df)
     df = build_series(df)
+
+        # jeśli mamy total_*_score — przygotuj poprzednie wartości do delty (per game)
+    if "total_home_score" in df.columns and "total_away_score" in df.columns:
+        df["prev_total_home_score"] = df.groupby("game_id")["total_home_score"].shift(1)
+        df["prev_total_away_score"] = df.groupby("game_id")["total_away_score"].shift(1)
+    else:
+        df["prev_total_home_score"] = None
+        df["prev_total_away_score"] = None
+
+    pts_scorer = df.apply(compute_play_points, axis=1, result_type=None)
+    df["play_points"] = [t[0] for t in pts_scorer]
+    df["play_scorer"] = [t[1] for t in pts_scorer]
+
 
     # Uzupełnij brakujące takeaway_team: następna seria należy do zespołu, który przejął
     mask_missing = df["is_takeaway"] & (~df["takeaway_team"].astype(bool))
