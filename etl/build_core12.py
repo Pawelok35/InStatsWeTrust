@@ -3,15 +3,18 @@ Build a single Team Core12 table by merging offense/defense season summaries
 and computing derived "net" metrics + ranking.
 
 Usage:
-    python etl/build_core12.py --season 2024 --in_dir data/processed --out data/processed/team_core12_2024.csv
+    python etl/build_core12.py --season 2024 --in_dir data/processed --out data/processed/team_core12_2024.csv --pbp_csv data/processed/pbp_2024.csv
 
 Inputs (expected in --in_dir):
     epa_offense_summary_<season>_season.csv
     epa_defense_summary_<season>_season.csv
+Optional:
+    --pbp_csv -> season play-by-play CSV (nflverse style) to compute Clutch Index
 
 Outputs:
     team_core12_<season>.csv (detailed metrics)
     power_ranking_<season>.csv (compact ranking by net_epa)
+    team_clutch_<season>.csv (clutch metrics; only if --pbp_csv provided)
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+from etl.metrics.clutch_index import compute_team_clutch_metrics
 
 # ---- Required input columns (raw) ----
 REQ_OFF = {
@@ -199,25 +203,95 @@ def main():
     ap.add_argument("--season", type=int, required=True)
     ap.add_argument("--in_dir", type=Path, default=Path("data/processed"))
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--pbp_csv", type=Path, default=None, help="Optional: season PBP CSV to compute Clutch Index")
     args = ap.parse_args()
 
+    # 1) (Optional) Compute Clutch Index if pbp is provided
+    clutch = None
+    if args.pbp_csv is not None:
+        if not args.pbp_csv.exists():
+            raise FileNotFoundError(f"--pbp_csv not found: {args.pbp_csv}")
+        if args.pbp_csv.suffix == ".parquet":
+            pbp_df = pd.read_parquet(args.pbp_csv)
+        else:
+            pbp_df = pd.read_csv(args.pbp_csv)
+
+        clutch = compute_team_clutch_metrics(pbp_df, season=args.season)
+        clutch_out = args.in_dir / f"team_clutch_{args.season}.csv"
+        clutch_out.parent.mkdir(parents=True, exist_ok=True)
+        clutch.to_csv(clutch_out, index=False)
+        print(f"✅ Saved Clutch Index: {clutch_out}")
+
+    # 2) Build Core12
     off, deff = load_tables(args.season, args.in_dir)
     core12 = build_core12(off, deff, args.season)
 
+    # 3) If Clutch computed, merge clutch_index_0_100
+    if clutch is not None:
+        core12 = core12.merge(
+            clutch[["season", "team", "clutch_index_0_100"]],
+            on=["season", "team"], how="left"
+        )
+
+    # 4) Save Core12
     out_path = args.out or (args.in_dir / f"team_core12_{args.season}.csv")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     core12.to_csv(out_path, index=False)
 
-    # compact ranking
+    # 5) Compact ranking (+ clutch if present)
     ranking = core12[[
         "season", "team", "rank_net_epa",
-        "net_epa", "off_epa_per_play", "def_epa_per_play_allowed"
+        "net_epa", "off_epa_per_play", "def_epa_per_play_allowed",
+        *(["clutch_index_0_100"] if "clutch_index_0_100" in core12.columns else []),
     ]].sort_values(["season", "net_epa"], ascending=[True, False])
     ranking_path = args.in_dir / f"power_ranking_{args.season}.csv"
     ranking.to_csv(ranking_path, index=False)
 
     print(f"✅ Zapisano Core12: {out_path}")
     print(f"🏆 Zapisano ranking: {ranking_path}")
+    if clutch is not None:
+        print("➕ Dołączono clutch_index_0_100 do Core12 i rankingu.")
+
+    # 6) Power Score+ (MVP+): 95% net_epa (z-score), 5% Clutch (0–100 → z-score)
+    try:
+        dfp = core12.copy()
+
+        # Z-score net_epa per season
+        dfp["_z_net_epa"] = dfp.groupby("season")["net_epa"].transform(
+            lambda s: (s - s.mean()) / (s.std(ddof=0) + 1e-9)
+        )
+
+        # Z-score clutch (jeśli jest kolumna)
+        if "clutch_index_0_100" in dfp.columns:
+            dfp["_z_clutch"] = dfp.groupby("season")["clutch_index_0_100"].transform(
+                lambda s: (s - s.mean()) / (s.std(ddof=0) + 1e-9)
+            )
+        else:
+            dfp["_z_clutch"] = 0.0  # brak clutch → neutralnie
+
+        # Wagi (Bonus10: 5% clutch)
+        W_NET = 0.95
+        W_CLU = 0.05
+
+        dfp["power_score_plus"] = W_NET * dfp["_z_net_epa"] + W_CLU * dfp["_z_clutch"]
+
+        ranking_plus = dfp[[
+            "season", "team", "net_epa",
+            *(["clutch_index_0_100"] if "clutch_index_0_100" in dfp.columns else []),
+            "power_score_plus"
+        ]].copy()
+
+        ranking_plus["rank_power_plus"] = ranking_plus.groupby("season")["power_score_plus"]\
+            .rank(method="first", ascending=False).astype(int)
+
+        ranking_plus = ranking_plus.sort_values(["season","power_score_plus"], ascending=[True, False])
+
+        ranking_plus_path = args.in_dir / f"power_ranking_plus_{args.season}.csv"
+        ranking_plus.to_csv(ranking_plus_path, index=False)
+        print(f"🏁 Zapisano Power Score+ (z Clutch 5%): {ranking_plus_path}")
+    except Exception as e:
+        print(f"ℹ️ Pominąłem Power Score+ (powód: {e})")
+
 
 
 if __name__ == "__main__":
