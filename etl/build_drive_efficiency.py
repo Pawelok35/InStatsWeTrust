@@ -28,6 +28,32 @@ import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
+# --- stdlib ---
+import re  # 👈 potrzebne do re.search / re.escape
+
+
+def col01(df: pd.DataFrame, name: str, default=0) -> pd.Series:
+    """
+    Zwraca serię 0/1 z dowolnej kolumny (bool/int/float/str) z bezpiecznym rzutowaniem:
+    True/False -> 1/0, liczby !=0 -> 1, NaN/None/"" -> 0. Gdy kolumna nie istnieje → default.
+    """
+    if name in df.columns:
+        s = df[name]
+    else:
+        s = pd.Series(default, index=df.index)
+    s = s.replace({True: 1, False: 0})
+    s = pd.to_numeric(s, errors="coerce").fillna(0)
+    return (s != 0).astype(int)
+
+def sstr(df: pd.DataFrame, name: str, default: str = "") -> pd.Series:
+    """
+    Bezpieczny lowercase string: brak kolumny/NaN → "", zawsze .str.lower().
+    """
+    if name in df.columns:
+        s = df[name].astype("string").fillna(default)
+    else:
+        s = pd.Series(default, index=df.index, dtype="string")
+    return s.str.lower()
 
 # ---------------------------- helpers ---------------------------- #
 
@@ -81,42 +107,54 @@ def detect_punt(df: pd.DataFrame) -> pd.Series:
         punt_flag |= df["play_type"].astype(str).str.lower().eq("punt")
     return punt_flag.astype(int)
 
+# --- PODMIANA detect_turnover ---
 def detect_turnover(df: pd.DataFrame) -> pd.Series:
-    """Heurystyka: INT / FUMBLE LOST / TURNOVER ON DOWNS na podstawie play_type/desc."""
-    pt = col(df, "play_type", default="").astype(str).str.lower()
-    desc = col(df, "desc", default="").astype(str).str.lower()
+    """
+    Heurystyka: INT / FUMBLE LOST / TURNOVER ON DOWNS na podstawie play_type/desc.
+    Zwraca serię 0/1.
+    """
+    pt   = sstr(df, "play_type")
+    desc = sstr(df, "desc")
 
     # 1) Interception
-    is_int = pt.eq("interception") | desc.str.contains("intercept")
+    is_int = pt.eq("interception") | desc.str.contains("intercept", na=False)
 
-    # 2) Fumble lost: 'fumble' + odzyskane przez DEF (a nie out of bounds, nie offense)
-    has_fum = desc.str.contains("fumble")
-    out_of_bounds = desc.str.contains("out of bounds")
+    # 2) Fumble lost: 'fumble' + odzyskane przez DEF (nie out of bounds, nie przez offense)
+    has_fum       = desc.str.contains("fumble", na=False)
+    out_of_bounds = desc.str.contains("out of bounds", na=False)
 
-    off_low = col(df, "posteam", default="").astype(str).str.lower()
-    def_low = col(df, "defteam", default="").astype(str).str.lower()
+    off_low = sstr(df, "posteam")
+    def_low = sstr(df, "defteam")
 
-    # per-wiersz test "recovered by <team>" — musi być pętla/list comp
     rec_by_off = pd.Series(
-        [("recovered by " + o) in t if o else False for t, o in zip(desc.tolist(), off_low.tolist())],
-        index=df.index,
-        dtype=bool,
+    [bool(re.search(rf"recovered by (the )?{re.escape(o)}\b", t))
+     if o else False
+     for o, t in zip(off_low, desc)],
+    index=df.index,
+    dtype=bool,
     )
+
     rec_by_def = pd.Series(
-        [("recovered by " + d) in t if d else False for t, d in zip(desc.tolist(), def_low.tolist())],
+        [bool(re.search(rf"recovered by (the )?{re.escape(d)}\b", t))
+        if d else False
+        for d, t in zip(def_low, desc)],
         index=df.index,
         dtype=bool,
     )
+
 
     is_fum_lost = has_fum & ~out_of_bounds & rec_by_def & ~rec_by_off
 
     # 3) Turnover on downs: 4th down + brak first down + fraza "on downs"
-    is_4th = col(df, "down", default=np.nan).fillna(0).astype(float).eq(4)
-    no_first_down = ~col(df, "first_down", default=0).astype(int).eq(1)
-    downs_text = desc.str.contains("turnover on downs") | desc.str.contains("on downs")
-    is_tod = is_4th & no_first_down & downs_text
+    is_4th        = pd.to_numeric(df.get("down", np.nan), errors="coerce").fillna(0).astype(float).eq(4)
+    first_down_01 = col01(df, "first_down", default=0)
+    no_first_down = ~first_down_01.eq(1)
+    downs_text    = desc.str.contains("turnover on downs", na=False) | desc.str.contains(r"\bon downs\b", na=False)
+    is_tod        = is_4th & no_first_down & downs_text
 
     return (is_int | is_fum_lost | is_tod).astype(int)
+
+
 
 
 def detect_redzone(df: pd.DataFrame) -> pd.Series:
@@ -270,55 +308,40 @@ def build_drive_df(pbp: pd.DataFrame) -> pd.DataFrame:
 
 
 
-        # starting field position if available
+         # ---- starting field position per drive (robust) ----
     if "yardline_100" in pbp.columns:
-        # 0) porządek w obrębie drive’u (po wcześniejszym sortowaniu)
+        # porządek wewnątrz drive’u (już powinno być posortowane wcześniej)
         pbp["_ord_in_drive"] = pbp.groupby("drive_key").cumcount()
 
-        # yardline_100 jako liczba (gdyby były stringi)
-        yl = pd.to_numeric(pbp["yardline_100"], errors="coerce")
+        # pomocnicze kolumny
+        pbp["_yl"]   = pd.to_numeric(pbp["yardline_100"], errors="coerce")
+        pbp["_pt"]   = col(pbp, "play_type", default="").astype(str).str.lower()
+        pbp["_desc"] = col(pbp, "desc", default="").astype(str).str.lower()
+        pbp["_np"]   = pd.to_numeric(col(pbp, "no_play", default=0), errors="coerce").fillna(0).astype(int)
 
-        # 1) Szeroka definicja "scrimmage":
-        #    - nie kickoff (wykryjemy po tekście lub play_type)
-        #    - nie 'no_play'
-        #    - znany yardline_100
-        desc_low = col(pbp, "desc", default="").astype(str).str.lower()
-        pt_low   = col(pbp, "play_type", default="").astype(str).str.lower()
-        no_play  = col(pbp, "no_play", default=0).astype(int)
+        def _drive_start_yl(sub: pd.DataFrame) -> float:
+            sub = sub.sort_values("_ord_in_drive")
+            # 1) pierwszy snap ze scrimmage: nie kickoff, nie no_play, znany yardline
+            is_kick = sub["_pt"].eq("kickoff") | sub["_desc"].str.contains("kicks off", na=False)
+            m1 = (~is_kick) & (sub["_np"] == 0) & sub["_yl"].notna()
+            if m1.any():
+                return float(sub.loc[m1, "_yl"].iloc[0])
+            # 2) fallback: pierwszy jakikolwiek play z nie-NaN yardline
+            m2 = sub["_yl"].notna()
+            if m2.any():
+                return float(sub.loc[m2, "_yl"].iloc[0])
+            return float("nan")
 
-        is_kickoff = pt_low.eq("kickoff") | desc_low.str.contains("kicks off")
-        is_scrimmage = (no_play.eq(0)) & (~is_kickoff) & yl.notna()
-
-        # 2) pierwszy scrimmage snap w drive’ie
-        first_scrim = (
-            pbp.loc[is_scrimmage, ["drive_key", "_ord_in_drive"]]
-            .assign(yardline_100=yl[is_scrimmage].values)
-            .sort_values(["drive_key", "_ord_in_drive"])
-            .drop_duplicates(subset=["drive_key"], keep="first")
-            .set_index("drive_key")["yardline_100"]
-        )
-
-        # 3) fallback: jeśli w danym drive nie było scrimmage z yardline_100,
-        #    weź po prostu pierwszy play z nie-NaN yardline_100 (jakikolwiek)
-        first_any = (
-            pbp.loc[yl.notna(), ["drive_key", "_ord_in_drive"]]
-            .assign(yardline_100=yl[yl.notna()].values)
-            .sort_values(["drive_key", "_ord_in_drive"])
-            .drop_duplicates(subset=["drive_key"], keep="first")
-            .set_index("drive_key")["yardline_100"]
-        )
-
-        start_fp = first_scrim.reindex(g["drive_key"])
-        missing = start_fp.isna()
-        if missing.any():
-            start_fp.loc[missing] = first_any.reindex(g.loc[missing, "drive_key"]).values
-
-        g["start_yardline_100"] = start_fp.astype(float)
+        starts = pbp.groupby("drive_key", sort=False).apply(_drive_start_yl)
+        # merge po drive_key (bez pułapek alignu po indeksach)
+        g = g.merge(starts.rename("start_yardline_100"), left_on="drive_key", right_index=True, how="left")
 
         # sprzątanie
-        pbp.drop(columns=["_ord_in_drive"], errors="ignore", inplace=True)
+        pbp.drop(columns=["_ord_in_drive","_yl","_pt","_desc","_np"], errors="ignore", inplace=True)
     else:
         g["start_yardline_100"] = np.nan
+    # ---- END starting field position ----
+
 
 
 
@@ -380,14 +403,14 @@ def summarize_side(drive_df: pd.DataFrame, side: str):
         wk.loc[mask_true, "ppd_true_sum"], wk.loc[mask_true, "drives"]
     )
     
-        # Points per drive
-    wk["ppd_basic"] = rate(wk["ppd_basic_sum"], wk["drives"])
-    wk["ppd_points"] = wk["ppd_basic"].copy()
+      
+    
+    
 
-    mask_true = wk["ppd_true_sum"].notna()
-    wk.loc[mask_true, "ppd_points"] = rate(
-        wk.loc[mask_true, "ppd_true_sum"], wk.loc[mask_true, "drives"]
-    )
+    
+  
+        
+    
 
     # TWARDY fallback: jeśli i tak wyszły NaN lub 0 przez brak drive_points, ustaw jak ppd_basic
     wk["ppd_points"] = wk["ppd_points"].where(
@@ -441,10 +464,57 @@ def main(args=None):
     wk_def, team_def = summarize_side(drives, "def")
 
     weekly = pd.concat([wk_off, wk_def], ignore_index=True)
+
+        # >>> add: SFP + Hidden Yards (weekly) - opcjonalnie
+    weekly["start_own_yardline_avg"] = 100 - weekly["start_yardline_100_avg"]
+
+    _hidden_w = weekly.pivot(index=["season","week","team"], columns="side",
+                             values="start_own_yardline_avg")
+    _hidden_w["hidden_yards_per_drive"] = _hidden_w["off"] - _hidden_w["def"]
+
+    weekly = weekly.merge(_hidden_w[["hidden_yards_per_drive"]],
+                          left_on=["season","week","team"], right_index=True, how="left")
+    # <<< end add
+
     team = pd.concat([team_off, team_def], ignore_index=True)
+    # >>> FIX: SFP + Hidden Yards bez duplikatów
+    # upewnij się, że mamy własną linię startu
+    if "start_own_yardline_avg" not in team.columns:
+        team["start_own_yardline_avg"] = 100 - team["start_yardline_100_avg"]
+
+    # policz hidden na poziomie teamu (OFF - DEF)
+    _hidden = team.pivot(index="team", columns="side", values="start_own_yardline_avg")
+    _hidden["hidden_yards_per_drive"] = _hidden["off"] - _hidden["def"]
+
+    # wyczyść ewentualne stare kolumny (_x/_y) i przypisz JEDNĄ kolumnę przez map()
+    for c in ["hidden_yards_per_drive_x", "hidden_yards_per_drive_y", "hidden_yards_per_drive"]:
+        if c in team.columns:
+            del team[c]
+    team["hidden_yards_per_drive"] = team["team"].map(_hidden["hidden_yards_per_drive"])
+    # <<< END FIX
+
 
     weekly = weekly.sort_values(["season", "week", "team", "side"]).reset_index(drop=True)
     team = team.sort_values(["season", "team", "side"]).reset_index(drop=True)
+    
+
+        # >>> add: rounding (czytelność) - opcjonalnie
+    cols_round_team = [
+        "start_yardline_100_avg","start_own_yardline_avg","hidden_yards_per_drive",
+        "ppd_points","ppd_basic","yds_per_drive","plays_per_drive",
+        "score_rate","td_rate","fg_rate","turnover_rate","punt_rate","redzone_drive_rate",
+    ]
+    cols_round_team = [c for c in cols_round_team if c in team.columns]
+    team[cols_round_team] = team[cols_round_team].astype(float).round(2)
+
+    cols_round_wk = [
+        "start_yardline_100_avg","start_own_yardline_avg","hidden_yards_per_drive",
+        "ppd_points","yds_per_drive","plays_per_drive","score_rate",
+    ]
+    cols_round_wk = [c for c in cols_round_wk if c in weekly.columns]
+    weekly[cols_round_wk] = weekly[cols_round_wk].astype(float).round(2)
+    # <<< end add
+
 
     ns.out_weekly.parent.mkdir(parents=True, exist_ok=True)
     ns.out_team.parent.mkdir(parents=True, exist_ok=True)
