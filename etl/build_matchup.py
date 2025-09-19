@@ -14,6 +14,8 @@ import warnings
 from pathlib import Path
 from typing import Dict, List
 import re
+import sys
+
 
 import numpy as np
 import pandas as pd
@@ -59,6 +61,7 @@ METRIC_OVERRIDES: Dict[str, Dict[str, str]] = {
 
     # Drive Efficiency
     "drive_efficiency_weekly_2024.csv": {
+         "__weight__": "drives",
         # Podstawowe sumy po drive’ach / akcjach
         "drives": "sum",
         "plays": "sum",
@@ -159,6 +162,13 @@ def _aggregate_weekly(df: pd.DataFrame, overrides: Dict[str, str]) -> pd.DataFra
     agg_plan: Dict[str, str] = {}
     for c in metric_cols:
         agg_plan[c] = overrides.get(c, _infer_agg(c))
+        # wybór kolumny wagi: najpierw z overrides["__weight__"], inaczej fallback na "plays"
+    weight_col = overrides.get("__weight__")
+    if weight_col and weight_col not in df.columns:
+        # jeśli podana waga nie istnieje, spadamy na "plays" (jeśli jest)
+        weight_col = "plays" if "plays" in df.columns else None
+    if not weight_col:
+        weight_col = "plays" if "plays" in df.columns else None
 
     parts = []
     group_keys = [k for k in ["team", "side"] if k in df.columns]
@@ -176,7 +186,7 @@ def _aggregate_weekly(df: pd.DataFrame, overrides: Dict[str, str]) -> pd.DataFra
         if "side" in group_keys:
             row["side"] = keys[group_keys.index("side")]
 
-        w = g["plays"] if "plays" in g.columns else None
+        w = g[weight_col] if (weight_col and weight_col in g.columns) else None
         for c, how in agg_plan.items():
             if how == "sum":
                 val = float(g[c].sum())
@@ -185,7 +195,10 @@ def _aggregate_weekly(df: pd.DataFrame, overrides: Dict[str, str]) -> pd.DataFra
             else:
                 val = float(g[c].mean())
             row[c] = val
-        if "plays" in g.columns:
+        # zapisz sumę wybranej wagi (np. drives), a dla zgodności wstecz zachowaj też "plays" jeśli istnieje
+        if weight_col and weight_col in g.columns:
+            row[weight_col] = int(g[weight_col].sum())
+        if "plays" in g.columns and weight_col != "plays":
             row["plays"] = int(g["plays"].sum())
         parts.append(row)
     return pd.DataFrame(parts)
@@ -306,36 +319,302 @@ def _edge_direction_tag(x: float) -> str:
         return ""
     return "HOME ↑" if x > 0 else ("AWAY ↑" if x < 0 else "EVEN")
 
-def pretty_print_edges(matchup: pd.DataFrame, top_n: int = 20, min_abs: float = 0.5, include: str | None = None) -> None:
-    # Zbierz kolumny edge.*
+def _zscore_series(s: pd.Series) -> pd.Series:
+    m = s.mean()
+    sd = s.std(ddof=0)
+    if sd == 0 or np.isnan(sd):
+        return (s - m)  # unikamy dzielenia przez 0; wszystkie 0 ⇒ równe rangi
+    return (s - m) / sd
+import re as _re
+
+def build_edges_table(matchup: pd.DataFrame,
+                      team_features: pd.DataFrame,
+                      include_substr: str | None = None,
+                      include_regex: str | None = None,
+                      sort_mode: str = "abs",
+                      top_n: int = 20,
+                      min_abs: float = 0.0) -> pd.DataFrame:
+    # zbierz edge.*
     edge_cols = [c for c in matchup.columns if c.startswith("edge.")]
-    if include:
-        edge_cols = [c for c in edge_cols if include.lower() in c.lower()]
+    if include_substr:
+        edge_cols = [c for c in edge_cols if include_substr.lower() in c.lower()]
+    if include_regex:
+        try:
+            rx = re.compile(include_regex, flags=re.I)
+        except re.error as e:
+            print(f"[WARN] Invalid include_regex '{include_regex}': {e}. Ignoring filter.", file=sys.stderr)
+            rx = None
+        if rx:
+            edge_cols = [c for c in edge_cols if rx.search(c)]
+
+
     if not edge_cols:
-        print("No edge columns computed.")
-        return
+        return pd.DataFrame(columns=["edge_name", "value", "zscore"])
 
     s = matchup[edge_cols].iloc[0].dropna()
     if s.empty:
-        print("No edges (all NaN).")
-        return
+        return pd.DataFrame(columns=["edge_name", "value", "zscore"])
 
-    df = (
-        s.rename("value").to_frame()
-         .assign(abs=lambda d: d["value"].abs())
-    )
-    # próg istotności
+    df = s.rename("value").to_frame()
+    df["edge_name"] = df.index
+
+    # policz z-score edge’ów względem ligi
+    # przygotuj mapy rozkładów dla _off/_def/_team
+    def get_league_z(col: str) -> float | None:
+        # col jest np. 'edge.off_vs_def.yds'
+        base = col.replace("edge.", "")
+        if "." not in base:
+            return None
+        prefix, stem = base.split(".", 1)
+        if prefix == "off_vs_def":
+            a = f"{stem}_off"
+            b = f"{stem}_def"
+            if a in team_features.columns and b in team_features.columns:
+                za = _zscore_series(team_features[a].dropna())
+                zb = _zscore_series(team_features[b].dropna())
+                # wartości zespołów z matchupu:
+                home = matchup[f"home.{a}"].iloc[0] if f"home.{a}" in matchup.columns else np.nan
+                away = matchup[f"away.{b}"].iloc[0] if f"away.{b}" in matchup.columns else np.nan
+                # osadź w rozkładach: najbliższa aproksymacja — po prostu standaryzujemy względem ligi (mean/std); 
+                # przekształcamy skalą i przesunięciem:
+                za_val = (home - team_features[a].mean()) / (team_features[a].std(ddof=0) or 1)
+                zb_val = (away - team_features[b].mean()) / (team_features[b].std(ddof=0) or 1)
+                return za_val - zb_val
+        elif prefix == "def_vs_off":
+            a = f"{stem}_def"
+            b = f"{stem}_off"
+            if a in team_features.columns and b in team_features.columns:
+                # wyciągamy SKALARY z matchupu (iloc[0]) zamiast Series z .get(...)
+                home = matchup[f"home.{a}"].iloc[0] if f"home.{a}" in matchup.columns else np.nan
+                away = matchup[f"away.{b}"].iloc[0] if f"away.{b}" in matchup.columns else np.nan
+                za_val = (home - team_features[a].mean()) / (team_features[a].std(ddof=0) or 1)
+                zb_val = (away - team_features[b].mean()) / (team_features[b].std(ddof=0) or 1)
+                return za_val - zb_val
+            else:  # team_vs_team
+                a = f"{stem}_team"
+                if a in team_features.columns:
+                    home = matchup[f"home.{a}"].iloc[0] if f"home.{a}" in matchup.columns else np.nan
+                    away = matchup[f"away.{a}"].iloc[0] if f"away.{a}" in matchup.columns else np.nan
+                    za_val = (home - team_features[a].mean()) / (team_features[a].std(ddof=0) or 1)
+                    zb_val = (away - team_features[a].mean()) / (team_features[a].std(ddof=0) or 1)
+                    return za_val - zb_val
+
+        return None
+
+    df["zscore"] = df["edge_name"].apply(get_league_z)
+    df["zscore"] = pd.to_numeric(df["zscore"], errors="coerce")
+
+
+    # filtrowanie po progu
+    df["abs"] = df["value"].abs()
     df = df[df["abs"] >= min_abs]
+
+        # friendly hint when nothing passes filters
     if df.empty:
+        reason = []
+        if include_regex:
+            reason.append(f"regex='{include_regex}'")
+        if min_abs is not None:
+            reason.append(f"min_abs={min_abs}")
+        hint = " & ".join(reason) or "no qualifying edges"
+        print(f"[INFO] No edges to show ({hint}). Try relaxing filters or lowering --min_abs.", file=sys.stderr)
+        return df
+
+        # drop rows that have no data on both sides
+    df = df.dropna(subset=["value"])
+
+             # sort
+    if sort_mode == "zscore" and df["zscore"].notna().any():
+        # stabilne sortowanie: najpierw |z|, potem |value| (abs), potem nazwa edge
+        df["_zkey"] = df["zscore"].abs().fillna(-np.inf)
+        df = df.sort_values(["_zkey", "abs", "edge_name"], ascending=[False, False, True])
+        df = df.drop(columns="_zkey")
+    else:
+        # stabilne sortowanie: najpierw |value| (abs), potem nazwa edge
+        df = df.sort_values(["abs", "edge_name"], ascending=[False, True])
+
+
+
+
+    return df[["edge_name", "value", "zscore"]].head(top_n).reset_index(drop=True)
+
+# === NEW: full comparison table (home, away, edge, dir, z) ===
+
+def _league_z_for_edge(edge_name: str, matchup: pd.DataFrame, team_features: pd.DataFrame) -> float | None:
+    # edge_name np. "off_vs_def:net_third_down_sr"
+    try:
+        prefix, stem = edge_name.split(":", 1)
+    except ValueError:
+        return None
+
+    # lokalny helper — wyciąga skalara z matchupu (pierwszy wiersz)
+    def _scalar(col: str) -> float:
+        if col in matchup.columns:
+            val = matchup[col].iloc[0]
+            try:
+                return float(val)
+            except Exception:
+                return np.nan
+        return np.nan
+
+    # z-score po kolumnie w team_features
+    def _z(col: str, value: float) -> float:
+        if col not in team_features.columns:
+            return np.nan
+        s = team_features[col].astype(float)
+        mu = s.mean()
+        sd = s.std(ddof=0)
+        if sd == 0 or np.isnan(sd):
+            return np.nan
+        return (value - mu) / sd
+
+    try:
+        if prefix == "off_vs_def":
+            a = f"{stem}_off"
+            b = f"{stem}_def"
+            home_val = _scalar(f"home.{a}")
+            away_val = _scalar(f"away.{b}")
+            return _z(a, home_val) - _z(b, away_val)
+
+        elif prefix == "def_vs_off":
+            a = f"{stem}_def"
+            b = f"{stem}_off"
+            home_val = _scalar(f"home.{a}")
+            away_val = _scalar(f"away.{b}")
+            return _z(a, home_val) - _z(b, away_val)
+
+        else:  # "team_vs_team"
+            a = f"{stem}_team"
+            home_val = _scalar(f"home.{a}")
+            away_val = _scalar(f"away.{a}")
+            return _z(a, home_val) - _z(a, away_val)
+    except Exception:
+        return None
+
+
+def build_comparison_table(matchup: pd.DataFrame,
+                           team_features: pd.DataFrame,
+                           include_substr: str | None = None,
+                           include_regex: str | None = None,
+                           sort_mode: str = "abs",
+                           top_n: int = 9999) -> pd.DataFrame:
+    """
+    Zwraca pełną tabelę: Metric | Home | Away | Edge | Dir | Z
+    Oparta o kolumny edge.* + raw home./away. wyliczone ze stemów.
+    """
+    if matchup.empty:
+        return pd.DataFrame(columns=["metric", "home", "away", "edge", "dir", "z"])
+
+    edge_cols = [c for c in matchup.columns if c.startswith("edge.")]
+    if include_substr:
+        edge_cols = [c for c in edge_cols if include_substr.lower() in c.lower()]
+    if include_regex:
+        try:
+            rx = re.compile(include_regex, flags=re.I)
+        except re.error as e:
+            print(f"[WARN] Invalid include_regex '{include_regex}': {e}. Ignoring filter.", file=sys.stderr)
+            rx = None
+        if rx:
+            edge_cols = [c for c in edge_cols if rx.search(c)]
+
+
+    if not edge_cols:
+        return pd.DataFrame(columns=["metric", "home", "away", "edge", "dir", "z"])
+
+    rows = []
+    for col in edge_cols:
+        base = col.replace("edge.", "")
+        if "." in base:
+            prefix, stem = base.split(".", 1)
+        else:
+            prefix, stem = "edge", base
+
+        # dobierz sufiksy do raw
+        if prefix == "off_vs_def":
+            hsfx, asfx, label_prefix = "_off", "_def", "Offense vs Opponent Defense"
+        elif prefix == "def_vs_off":
+            hsfx, asfx, label_prefix = "_def", "_off", "Defense vs Opponent Offense"
+        else:
+            hsfx, asfx, label_prefix = "_team", "_team", "Team vs Team"
+
+        hcol = f"home.{stem}{hsfx}"
+        acol = f"away.{stem}{asfx}"
+        hval = matchup[hcol].iloc[0] if hcol in matchup.columns else np.nan
+        aval = matchup[acol].iloc[0] if acol in matchup.columns else np.nan
+        edge_val = matchup[col].iloc[0] if col in matchup.columns else np.nan
+
+        label = f"{label_prefix} · {METRIC_LABELS.get(stem, stem)}"
+        rows.append({
+            "metric": label,
+            "home": hval,
+            "away": aval,
+            "edge": edge_val,
+            "dir": _edge_direction_tag(edge_val),
+            "z": _league_z_for_edge(col, matchup, team_features)
+        })
+
+    df = pd.DataFrame(rows)
+
+    # sortowanie
+    if sort_mode == "zscore" and df["z"].notna().any():
+        df = df.sort_values("z", key=lambda s: s.abs().fillna(-np.inf), ascending=False)
+    else:
+        df = df.assign(abs=lambda d: d["edge"].abs()).sort_values("abs", ascending=False).drop(columns=["abs"])
+
+    return df.head(top_n).reset_index(drop=True)
+
+
+def print_comparison_table(df: pd.DataFrame, max_rows: int = 120) -> None:
+    if df is None or df.empty:
+        print("\n(no comparison table)\n")
+        return
+    shown = df.head(max_rows).copy()
+    with pd.option_context("display.max_rows", None, "display.max_colwidth", 140):
+        print("\nFull comparison table (top {} rows):\n".format(len(shown)))
+        print(shown.to_string(index=False, float_format=lambda x: f"{x:.3f}" if isinstance(x, (int, float, np.floating)) else str(x)))
+
+
+def export_table_csv(df: pd.DataFrame, path: str) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(p, index=False)
+    print(f"📄 Saved comparison table CSV: {p}")
+
+
+
+def pretty_print_edges(
+    matchup: pd.DataFrame,
+    team_features: pd.DataFrame,
+    top_n: int = 20,
+    min_abs: float = 0.5,
+    include: str | None = None,
+    include_regex: str | None = None,
+    sort_mode: str = "abs",
+) -> None:
+    # Zbuduj tabelę edge’ów (value + zscore + filtrowanie/sortowanie)
+    df = build_edges_table(
+        matchup=matchup,
+        team_features=team_features,
+        include_substr=include,
+        include_regex=include_regex,
+        sort_mode=sort_mode,
+        top_n=top_n,
+        min_abs=min_abs,
+    )
+
+    if df is None or df.empty:
         print("No edges above threshold.")
         return
 
-    df = df.sort_values("abs", ascending=False).drop(columns=["abs"]).head(top_n).copy()
+    # Dodaj kierunek przewagi
     df["dir"] = df["value"].apply(_edge_direction_tag)
+    df["value"]  = pd.to_numeric(df["value"], errors="coerce").round(3)
+    df["zscore"] = pd.to_numeric(df["zscore"], errors="coerce").round(3)
 
-    print("\nTop edges (by |value|):\n")
-    with pd.option_context("display.max_rows", None, "display.max_colwidth", 120):
-        print(df[["value", "dir"]].to_string())
+    print("\nTop edges (sorted by {}):\n".format("z-score" if sort_mode == "zscore" else "|value|"))
+    with pd.option_context("display.max_rows", None, "display.max_colwidth", 140):
+        print(df[["edge_name", "value", "zscore", "dir"]].to_string(index=False))
+
 
 PREFIX_LABELS = {
     "off_vs_def": "Offense vs Opponent Defense",
@@ -426,6 +705,48 @@ def export_scorecard_html(df: pd.DataFrame, path: str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(html, encoding="utf-8")
+
+def print_raw_for_stems(matchup: pd.DataFrame, stems_csv: str | None) -> None:
+    if not stems_csv:
+        return
+    stems = [s.strip() for s in stems_csv.split(",") if s.strip()]
+    if not stems:
+        return
+
+    def _val(col: str) -> float:
+        if col in matchup.columns:
+            v = matchup[col].iloc[0]
+            try:
+                return float(v)
+            except Exception:
+                return np.nan
+        return np.nan
+
+    rows = []
+    for stem in stems:
+        for prefix, asuf, bsuf, label in [
+            ("off_vs_def", "_off", "_def", "Off vs Def"),
+            ("def_vs_off", "_def", "_off", "Def vs Off"),
+            ("team_vs_team", "_team", "_team", "Team vs Team"),
+        ]:
+            home_col = f"home.{stem}{asuf}"
+            away_col = f"away.{stem}{bsuf}" if prefix != "team_vs_team" else f"away.{stem}{asuf}"
+            edge_col = f"edge.{prefix}.{stem}"
+            if edge_col in matchup.columns:
+                rows.append({
+                    "metric": f"{label} · {stem}",
+                    "home": _val(home_col),
+                    "away": _val(away_col),
+                    "edge": _val(edge_col),
+                })
+
+    if rows:
+        df = pd.DataFrame(rows)
+        print("\nRaw values for selected metrics:\n")
+        with pd.option_context("display.max_rows", None, "display.max_colwidth", 140):
+            print(df.to_string(index=False, float_format=lambda x: f"{x:.3f}"))
+
+
 
 SCORECARD_LEGEND = (
     "Legend: HOME ↑ means advantage to the home team, AWAY ↑ to the away team. "
@@ -586,6 +907,181 @@ METRIC_LABELS = {
     "avg_start_yardline_100_off": "Avg Starting Yards (O)",
 }
 
+# Dodatkowe etykiety — uzupełnienia
+METRIC_LABELS.update({
+    "adj_epa": "Adj EPA",
+    "adj_sr": "Adj Success Rate",
+    "auto_fd_allowed": "Auto Fd Allowed",
+    "avg_start_yardline_100": "Avg Starting Yards (O)",
+    "avg_start_yardline_100_faced": "Avg Starting Yards Faced",
+    "chunk20_allowed": "Chunk 20+ Allowed",
+    "chunk20_rate": "Chunk 20+ Rate",
+    "def_3d_allowed_conv": "Defense · 3rd Down Allowed Conversions",
+    "def_3d_allowed_rate": "Defense · 3rd Down Allowed Rate",
+    "def_3d_att_faced": "Defense · 3rd Down Attempts Faced",
+    "def_3d_avg_togo_faced": "Defense · 3rd Down Avg Togo Faced",
+    "def_3d_epa_allowed_per_play": "Defense · 3rd Down EPA Allowed Per Play",
+    "def_3d_pass_rate_faced": "Defense · 3rd Down Pass Rate Faced",
+    "def_3d_sr_allowed": "Defense · 3rd Down Success Rate Allowed",
+    "def_auto_fd_allowed_pg": "Defense · Auto Fd Allowed (pg)",
+    "def_dpi_yds_pg": "Defense · Dpi Yards (pg)",
+    "def_epa_per_play_allowed": "Defense · EPA Per Play Allowed",
+    "def_epa_per_play_allowed_delta3": "Defense · EPA Per Play Allowed delta3",
+    "def_epa_per_play_allowed_roll3": "Defense · EPA Per Play Allowed roll3",
+    "def_median_epa_allowed": "Defense · Median EPA Allowed",
+    "def_plays": "Defense · Plays",
+    "defteam": "Defteam",
+    "dpi_yds": "Dpi Yards",
+    "drives": "Drives",
+    "early_down_epa": "Early Down EPA",
+    "early_down_epa_allowed": "Early Down EPA Allowed",
+    "epa_avg_h1": "EPA Avg h1",
+    "epa_avg_h2": "EPA Avg h2",
+    "epa_h1": "EPA h1",
+    "epa_h2": "EPA h2",
+    "epa_per_play": "EPA Per Play",
+    "expl_pass_allowed": "Expl Pass Allowed",
+    "expl_rate_allowed": "Expl Rate Allowed",
+    "expl_rush_allowed": "Expl Rush Allowed",
+    "expl_total_allowed": "Expl Total Allowed",
+    "explosive_plays": "Explosive Plays",
+    "explosive_plays_allowed": "Explosive Plays Allowed",
+    "explosive_rate": "Explosive Rate",
+    "explosive_rate_allowed": "Explosive Rate Allowed",
+    "fg_att": "FG Attempts",
+    "fg_drives": "FG Drives",
+    "fg_epa_per_att": "FG EPA Per Attempts",
+    "fg_made": "FG Made",
+    "fg_pct": "FG Pct",
+    "fg_rate": "FG Rate",
+    "field_pos_advantage": "Field Position Edge",
+    "fourth_down_sr": "Fourth Down Success Rate",
+    "fourth_down_sr_allowed": "Fourth Down Success Rate Allowed",
+    "games": "Games",
+    "hidden_yards_per_drive": "Hidden Yards Per Drive",
+    "ko_opp_start_yd100": "Kickoff Opp Start yd100",
+    "ko_plays": "Kickoff Plays",
+    "ko_tb_rate": "Kickoff Tb Rate",
+    "late_down_epa": "Late Down EPA",
+    "late_down_epa_allowed": "Late Down EPA Allowed",
+    "momentum_3w": "Momentum 3w",
+    "net_early_down_epa": "Net · Early Down EPA",
+    "net_epa": "Net · EPA",
+    "net_epa_delta3": "Net · EPA delta3",
+    "net_epa_roll3": "Net · EPA roll3",
+    "net_explosive_rate": "Net · Explosive Rate",
+    "net_fourth_down_sr": "Net · Fourth Down Success Rate",
+    "net_late_down_epa": "Net Late Down EPA",
+    "net_red_zone_epa": "Net Red Zone EPA",
+    "net_third_down_sr": "Net 3rd Down SR",
+    "off_3d_att": "Offense · 3rd Down Attempts",
+    "off_3d_avg_togo": "Offense · 3rd Down Avg Togo",
+    "off_3d_conv": "Offense · 3rd Down Conversions",
+    "off_3d_epa_per_play": "Offense · 3rd Down EPA Per Play",
+    "off_3d_pass_rate": "Offense · 3rd Down Pass Rate",
+    "off_3d_rate": "Offense · 3rd Down Rate",
+    "off_3d_sr": "Offense · 3rd Down Success Rate",
+    "off_epa_per_play": "Offense · EPA Per Play",
+    "off_epa_per_play_delta3": "Offense · EPA Per Play delta3",
+    "off_epa_per_play_roll3": "Offense · EPA Per Play roll3",
+    "off_median_epa": "Offense · Median EPA",
+    "opp": "Opp",
+    "pass_epa_per_play": "Pass EPA Per Play",
+    "pass_epa_per_play_allowed": "Pass EPA Per Play Allowed",
+    "pass_rush_delta": "Pass Rush Delta",
+    "pen_per_100_plays": "Pen Per 100 Plays",
+    "pen_per_100_plays_w": "Pen Per 100 Plays W",
+    "penalties": "Penalties",
+    "penalties_pg": "Penalties (pg)",
+    "penalty_yds": "Penalty Yards",
+    "penalty_yds_pg": "Penalty Yards (pg)",
+    "plays": "Plays",
+    "plays_h1": "Plays h1",
+    "plays_h2": "Plays h2",
+    "plays_per_drive": "Plays Per Drive",
+    "pot_per_game": "Points off Turnovers (pg)",
+    "pot_per_takeaway": "Pot Per Takeaway",
+    "pot_points": "Pot Points",
+    "ppd_basic": "Ppd Basic",
+    "ppd_basic_sum": "Ppd Basic Sum",
+    "ppd_points": "Ppd Points",
+    "ppd_true_sum": "Ppd True Sum",
+    "presnap_pen_rate": "Presnap Pen Rate",
+    "presnap_pen_rate_w": "Presnap Pen Rate W",
+    "punt_drives": "Punt Drives",
+    "punt_net": "Punt Net",
+    "punt_opp_start_yd100": "Punt Opp Start yd100",
+    "punt_plays": "Punt Plays",
+    "punt_rate": "Punt Rate",
+    "red_zone_epa": "Red Zone EPA",
+    "red_zone_epa_allowed": "Red Zone EPA Allowed",
+    "redzone_drive_rate": "Redzone Drive Rate",
+    "ret_epa": "Ret EPA",
+    "ret_epa_against": "Ret EPA Against",
+    "ret_epa_diff": "Ret EPA Diff",
+    "ret_plays": "Ret Plays",
+    "rush_epa_per_play": "Rush EPA Per Play",
+    "rush_epa_per_play_allowed": "Rush EPA Per Play Allowed",
+    "rz_drives": "Red Zone Drives",
+    "rz_efficiency": "Red Zone Efficiency",
+    "rz_efficiency_allowed": "Red Zone Efficiency Allowed",
+    "rz_empty": "Red Zone Empty",
+    "rz_empty_allowed": "Red Zone Empty Allowed",
+    "rz_fg": "Red Zone FG",
+    "rz_fg_allowed": "Red Zone FG Allowed",
+    "rz_pen_rate": "Red Zone Pen Rate",
+    "rz_pen_rate_w": "Red Zone Pen Rate W",
+    "rz_td": "Red Zone Td",
+    "rz_td_allowed": "Red Zone Td Allowed",
+    "rz_trips": "Red Zone Trips",
+    "rz_trips_allowed": "Red Zone Trips Allowed",
+    "score_drives": "Score Drives",
+    "score_rate": "Score Rate",
+    "sr": "Success Rate",
+    "sr_h1": "Success Rate h1",
+    "sr_h2": "Success Rate h2",
+    "st_epa": "St EPA",
+    "st_epa_per_play": "St EPA Per Play",
+    "st_pen_rate": "St Pen Rate",
+    "st_plays": "St Plays",
+    "st_score": "Special Teams Score",
+    "start_own_yardline_avg": "Start Own Yardline Avg",
+    "start_yardline_100_avg": "Start Yardline 100 Avg",
+    "success_rate": "Success Rate",
+    "success_rate_allowed": "Success Rate Allowed",
+    "success_rate_h1": "Success Rate h1",
+    "success_rate_h2": "Success Rate h2",
+    "successes": "Successes",
+    "takeaways": "Takeaways",
+    "td_drives": "Td Drives",
+    "td_rate": "Td Rate",
+    "third_down_sr": "Third Down Success Rate",
+    "third_down_sr_allowed": "Third Down Success Rate Allowed",
+    "third_fourth_pen": "Third Fourth Pen",
+    "third_fourth_pen_pg": "3rd/4th Down Penalties (pg)",
+    "to_drives": "Turnover Drives",
+    "total_yards": "Total Yards",
+    "turnover_epa": "Turnover EPA",
+    "turnover_epa_forced": "Turnover EPA Forced",
+    "turnover_epa_net": "Turnover EPA Net",
+    "turnover_rate": "Turnover Rate",
+    "xp_att": "XP Attempts",
+    "xp_epa_per_att": "XP EPA Per Attempts",
+    "xp_made": "XP Made",
+    "xp_pct": "XP Pct",
+    "yards_allowed": "Yards Allowed",
+    "yds": "Yards",
+    "yds_per_drive": "Yards Per Drive",
+})
+
+    # --- Final overrides: ręcznie ładniejsze nazwy niż z generatora ---
+METRIC_LABELS.update({
+    "ppd_basic_sum": "PPD (Points per Drive, sum)",   # zamiast "Ppd Basic Sum"
+    "ppd_basic":     "PPD (Points per Drive)",
+    "td_drives":     "TD Drives",                      # zamiast "Td Drives"
+    "pen_per_100_plays_w": "Penalties / 100 plays",    # pełniejsza nazwa
+})
+
 
 
 
@@ -645,6 +1141,17 @@ def main():
     ap.add_argument("--legend", action="store_true", help="Print a one-line legend above the scorecard")
     ap.add_argument("--export_md", type=str, default=None, help="Path to save the scorecard as a Markdown file")
     ap.add_argument("--export_html", type=str, default=None, help="Path to save the scorecard as an HTML file")
+    ap.add_argument("--include_regex", type=str, default=None, help="Regex to filter edge names (applied to full 'edge.*' column)")
+    ap.add_argument("--sort", type=str, choices=["abs", "zscore"], default="abs", help="Sort Top edges by absolute value or by league z-score")
+    ap.add_argument("--show_raw", type=str, default=None, help="Comma-separated stems to display raw home/away values for (e.g., 'yds,ppd_basic_sum,rz_drives')")
+    ap.add_argument("--export_table", type=str, default=None, help="Path to save the full comparison table (CSV)")
+    ap.add_argument("--print_table", action="store_true", help="Print the full comparison table to console")
+    ap.add_argument("--table_include", type=str, default=None, help="Substring filter for metrics included in the table")
+    ap.add_argument("--table_regex", type=str, default=None, help="Regex filter for metrics included in the table")
+    ap.add_argument("--table_top", type=int, default=9999, help="Limit rows in the comparison table (after sorting)")
+    ap.add_argument("--table_sort", type=str, choices=["abs", "zscore"], default="abs", help="Sort table by |edge| or by z-score")
+
+
 
 
     args = ap.parse_args()
@@ -677,8 +1184,12 @@ def main():
 
     mu.to_csv(out_path, index=False)
     print(f"💾 Saved matchup: {out_path}")
+    
+    
+    
 
-    pretty_print_edges(mu, top_n=args.top, min_abs=args.min_abs, include=args.include)
+    pretty_print_edges(mu, feats, top_n=args.top, min_abs=args.min_abs, include=args.include, include_regex=args.include_regex, sort_mode=args.sort)
+
 
         # Legend + Scorecard
     if args.legend:
@@ -702,8 +1213,23 @@ def main():
         print(f"🖼️ Saved scorecard (HTML): {args.export_html}")
 
 
-    print_scorecard(mu, max_rows=args.score_n)
+    # Opcjonalny podgląd surowych wartości dla wybranych metryk
+    print_raw_for_stems(mu, args.show_raw)
+        # Pełna tabela porównawcza (home/away/edge/dir/z)
+    comp_df = build_comparison_table(
+        matchup=mu,
+        team_features=feats,
+        include_substr=args.table_include,
+        include_regex=args.table_regex,
+        sort_mode=args.table_sort,
+        top_n=args.table_top
+    )
 
+    if args.print_table:
+        print_comparison_table(comp_df, max_rows=min(args.table_top, 120))
+
+    if args.export_table:
+        export_table_csv(comp_df, args.export_table)
 
 if __name__ == "__main__":
     main()
