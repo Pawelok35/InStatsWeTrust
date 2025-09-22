@@ -1,0 +1,10 @@
+metric,home,away,edge,dir,z
+"Offense vs Opponent Defense · PPD (Points per Drive, sum)",13.0,34.0,-21.0,AWAY ↑,
+"Defense vs Opponent Offense · PPD (Points per Drive, sum)",27.0,17.0,10.0,HOME ↑,
+Defense vs Opponent Offense · Red Zone Drives,5.0,2.0,3.0,HOME ↑,
+Offense vs Opponent Defense · Red Zone Drives,4.0,3.0,1.0,HOME ↑,
+Offense vs Opponent Defense · Ppd True Sum,,,,,
+Defense vs Opponent Offense · Ppd True Sum,,,,,
+"Team vs Team · PPD (Points per Drive, sum)",,,,,
+Team vs Team · Ppd True Sum,,,,,
+Team vs Team · Red Zone Drives,,,,,

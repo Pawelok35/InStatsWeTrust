@@ -124,14 +124,35 @@ METRIC_OVERRIDES: Dict[str, Dict[str, str]] = {
 
 
 def _list_candidate_files(in_dir: Path) -> List[Path]:
+    """
+    Zwraca tylko pliki potrzebne do naszych 21 metryk (Core12 + rozszerzenia).
+    """
+    keep = [
+        # Core12
+        f"core12_team_{{season}}.csv",            # Off EPA/play, Def EPA/play, SR, Tempo, 4th down, SFP, Hidden Yards, Penalty EPA, QB pressure, Run/Pass block, Rolling Form + SoS
+
+        # Rozszerzenia (Bonus 9)
+        f"third_down_weekly_{{season}}.csv",
+        f"redzone_weekly_{{season}}.csv",
+        f"points_off_turnovers_weekly_{{season}}.csv",
+        f"explosives_allowed_weekly_{{season}}.csv",
+        f"drive_efficiency_weekly_{{season}}.csv",
+        f"second_half_weekly_{{season}}.csv",
+        f"first_down_success_weekly_{{season}}.csv",
+        f"penalty_discipline_weekly_{{season}}.csv",
+        f"special_teams_weekly_{{season}}.csv",
+    ]
+
     files: List[Path] = []
-    for p in in_dir.glob("*.csv"):
-        name = p.name.lower()
-        if name.endswith("_weekly_2024.csv") or name.endswith("_weekly_2025.csv"):
-            files.append(p)
-        elif name.endswith("_team_2024.csv") or name.endswith("_team_2025.csv"):
-            files.append(p)
+    for pat in keep:
+        # podmieniamy {season} na 2024 / 2025
+        for year in (2024, 2025):
+            p = in_dir / pat.format(season=year)
+            if p.exists():
+                files.append(p)
+
     return files
+
 
 def _weighted_mean(series: pd.Series, weights: pd.Series | None) -> float:
     s = series.astype(float)
@@ -1136,7 +1157,7 @@ def main():
     ap.add_argument("--top", type=int, default=20, help="How many top edges to display")
     ap.add_argument("--min_abs", type=float, default=0.5, help="Min absolute edge to display")
     ap.add_argument("--include", type=str, default=None, help="Filter edge columns by substring (e.g., off_vs_def)")
-    ap.add_argument("--score_n", type=int, default=12, help="How many key edges to show in scorecard")
+    ap.add_argument("--score_n", type=int, default=17, help="How many key edges to show in scorecard")
     ap.add_argument("--normalize",type=str,choices=["none", "per_game"],default="none",help="Normalization mode for sum-like metrics (default: none).")
     ap.add_argument("--legend", action="store_true", help="Print a one-line legend above the scorecard")
     ap.add_argument("--export_md", type=str, default=None, help="Path to save the scorecard as a Markdown file")
