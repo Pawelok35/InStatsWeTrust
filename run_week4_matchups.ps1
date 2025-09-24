@@ -4,31 +4,29 @@ param(
   [string]$IN_DIR = "data/processed"
 )
 
+# Pary, które podałeś (home = gospodarz)
 $games = @(
-  @{ home = "ARI"; away = "SEA" },  # Arizona Cardinals vs Seattle Seahawks
-  @{ home = "PIT"; away = "MIN" },  # Pittsburgh Steelers vs Minnesota Vikings
-  @{ home = "ATL"; away = "WAS" },  # Atlanta Falcons vs Washington Commanders
-  @{ home = "BUF"; away = "NO"  },  # Buffalo Bills vs New Orleans Saints
-  @{ home = "DET"; away = "CLE" },  # Detroit Lions vs Cleveland Browns
-  @{ home = "HOU"; away = "TEN" },  # Houston Texans vs Tennessee Titans
-  @{ home = "NE";  away = "CAR" },  # New England Patriots vs Carolina Panthers
-  @{ home = "NYG"; away = "LAC" },  # New York Giants vs Los Angeles Chargers
-  @{ home = "TB";  away = "PHI" },  # Tampa Bay Buccaneers vs Philadelphia Eagles
-  @{ home = "LAR"; away = "IND" },  # Los Angeles Rams vs Indianapolis Colts
-  @{ home = "SF";  away = "JAX" },  # San Francisco 49ers vs Jacksonville Jaguars
-  @{ home = "KC";  away = "BAL" },  # Kansas City Chiefs vs Baltimore Ravens
-  @{ home = "LV";  away = "CHI" }   # Las Vegas Raiders vs Chicago Bears
+    @{ home = "PIT"; away = "MIN" }  # Pittsburgh Steelers vs Minnesota Vikings
+    @{ home = "ATL"; away = "WAS" }  # Atlanta Falcons vs Washington Commanders
+    @{ home = "BUF"; away = "NO"  }  # Buffalo Bills vs New Orleans Saints
+    @{ home = "DET"; away = "CLE" }  # Detroit Lions vs Cleveland Browns
+    @{ home = "HOU"; away = "TEN" }  # Houston Texans vs Tennessee Titans
+    @{ home = "NE";  away = "CAR" }  # New England Patriots vs Carolina Panthers
+    @{ home = "NYG"; away = "LAC" }  # New York Giants vs Los Angeles Chargers
+    @{ home = "TB";  away = "PHI" }  # Tampa Bay Buccaneers vs Philadelphia Eagles
+    @{ home = "LA"; away = "IND" }  # Los Angeles Rams vs Indianapolis Colts
+    
 )
-
 
 $OUT_DIR = Join-Path $IN_DIR "matchups"
 if (-not (Test-Path $OUT_DIR)) { New-Item -ItemType Directory -Path $OUT_DIR | Out-Null }
 
+# Filtrowanie tabeli, żeby zredukować NaN-y i zachować sensowne grupy
+$tableRegex = "^(Offense vs Opponent Defense|Defense vs Opponent Offense|Team vs Team · (Red Zone|Expl|Takeaways|Offense · 3rd Down|Defense · 3rd Down))"
+
 foreach ($g in $games) {
-  # UWAGA: NIE używamy $home – to koliduje z wbudowanym $HOME!
   $HomeTeam = $g.home
   $AwayTeam = $g.away
-
   Write-Host "`n=== Building $HomeTeam vs $AwayTeam (Week $WEEK) ===" -ForegroundColor Cyan
 
   python etl/build_matchup.py `
@@ -39,9 +37,10 @@ foreach ($g in $games) {
     --in_dir $IN_DIR `
     --normalize per_game `
     --sort zscore `
-    --min_abs 0.25 `
-    --table_regex "(Offense vs Opponent Defense|Defense vs Opponent Offense|Team vs Team · (Red Zone|Expl|Takeaways|Offense · 3rd Down|Defense · 3rd Down|Defense · Plays|Offense · Plays))" `
-    --table_top 150 `
+    --min_abs 0.15 `
+    --table_regex $tableRegex `
+    --table_top 200 `
+    --table_sort zscore `
     --print_table `
     --export_table (Join-Path $OUT_DIR "${HomeTeam}_${AwayTeam}_w${WEEK}_${SEASON}_table.csv") `
     --export_md    (Join-Path $OUT_DIR "${HomeTeam}_${AwayTeam}_w${WEEK}_${SEASON}_scorecard.md") `

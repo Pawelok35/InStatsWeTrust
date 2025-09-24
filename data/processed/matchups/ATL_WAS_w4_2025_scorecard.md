@@ -1,14 +1,23 @@
 | Metric | Edge | Dir |
 |---|---:|:---|
-| Defense vs Opponent Offense · Yards Per Drive | -8.055 | AWAY ↑ |
-| Defense vs Opponent Offense · Successes | -5.252 | AWAY ↑ |
-| Offense vs Opponent Defense · Successes | 4.643 | HOME ↑ |
-| Offense vs Opponent Defense · Yards Per Drive | 4.530 | HOME ↑ |
-| Team vs Team · Red Zone Td | -3.000 | AWAY ↑ |
-| Offense vs Opponent Defense · Hidden Yards Per Drive | -2.630 | AWAY ↑ |
-| Defense vs Opponent Offense · Hidden Yards Per Drive | -2.630 | AWAY ↑ |
-| Offense vs Opponent Defense · Avg Starting Yards (O) | -2.601 | AWAY ↑ |
-| Team vs Team · Expl Pass Allowed | -2.500 | AWAY ↑ |
-| Team vs Team · Expl Total Allowed | -2.500 | AWAY ↑ |
-| Offense vs Opponent Defense · PPD (Points per Drive, sum) | 2.250 | HOME ↑ |
-| Team vs Team · Red Zone Trips Allowed | -2.000 | AWAY ↑ |
+| edge.def_vs_off.yds_per_drive | -8.055 | WAS ↑ |
+| edge.def_vs_off.successes | -5.252 | WAS ↑ |
+| edge.off_vs_def.successes | 4.643 | ATL ↑ |
+| edge.off_vs_def.yds_per_drive | 4.530 | ATL ↑ |
+| edge.team_vs_team.rz_td | -3.000 | WAS ↑ |
+| edge.off_vs_def.hidden_yards_per_drive | -2.630 | WAS ↑ |
+| edge.def_vs_off.hidden_yards_per_drive | -2.630 | WAS ↑ |
+| edge.off_vs_def.avg_start_yardline_100_off | -2.601 | WAS ↑ |
+| edge.team_vs_team.expl_pass_allowed | -2.500 | WAS ↑ |
+| edge.team_vs_team.expl_total_allowed | -2.500 | WAS ↑ |
+| edge.off_vs_def.ppd_basic_sum | 2.250 | ATL ↑ |
+| edge.team_vs_team.rz_trips_allowed | -2.000 | WAS ↑ |
+| edge.def_vs_off.ppd_basic_sum | -2.000 | WAS ↑ |
+| edge.team_vs_team.rz_empty | 2.000 | ATL ↑ |
+| edge.def_vs_off.avg_start_yardline_100_off | 1.513 | ATL ↑ |
+| edge.def_vs_off.rz_drives | -1.000 | WAS ↑ |
+| edge.team_vs_team.rz_empty_allowed | -1.000 | WAS ↑ |
+| edge.team_vs_team.rz_td_allowed | -1.000 | WAS ↑ |
+| edge.off_vs_def.ppd_basic | 0.642 | ATL ↑ |
+| edge.off_vs_def.ppd_points | 0.640 | ATL ↑ |
+| edge.team_vs_team.rz_efficiency | -0.525 | WAS ↑ |

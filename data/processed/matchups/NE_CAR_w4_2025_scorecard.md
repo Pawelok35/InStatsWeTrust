@@ -1,14 +1,23 @@
 | Metric | Edge | Dir |
 |---|---:|:---|
-| Offense vs Opponent Defense · Avg Starting Yards (O) | 4.539 | HOME ↑ |
-| Team vs Team · Expl Pass Allowed | 4.000 | HOME ↑ |
-| Defense vs Opponent Offense · Hidden Yards Per Drive | 3.795 | HOME ↑ |
-| Offense vs Opponent Defense · Hidden Yards Per Drive | 3.795 | HOME ↑ |
-| Offense vs Opponent Defense · Yards Per Drive | -3.435 | AWAY ↑ |
-| Team vs Team · Red Zone Trips Allowed | -3.000 | AWAY ↑ |
-| Team vs Team · Expl Rush Allowed | -2.500 | AWAY ↑ |
-| Defense vs Opponent Offense · Yards Per Drive | 2.420 | HOME ↑ |
-| Team vs Team · Red Zone Empty Allowed | -2.000 | AWAY ↑ |
-| Team vs Team · Expl Total Allowed | 1.500 | HOME ↑ |
-| Offense vs Opponent Defense · Successes | 1.137 | HOME ↑ |
-| Defense vs Opponent Offense · Successes | 1.076 | HOME ↑ |
+| edge.off_vs_def.avg_start_yardline_100_off | 4.539 | NE ↑ |
+| edge.team_vs_team.expl_pass_allowed | 4.000 | NE ↑ |
+| edge.def_vs_off.hidden_yards_per_drive | 3.795 | NE ↑ |
+| edge.off_vs_def.hidden_yards_per_drive | 3.795 | NE ↑ |
+| edge.off_vs_def.yds_per_drive | -3.435 | CAR ↑ |
+| edge.team_vs_team.rz_trips_allowed | -3.000 | CAR ↑ |
+| edge.team_vs_team.expl_rush_allowed | -2.500 | CAR ↑ |
+| edge.def_vs_off.yds_per_drive | 2.420 | NE ↑ |
+| edge.team_vs_team.rz_empty_allowed | -2.000 | CAR ↑ |
+| edge.team_vs_team.expl_total_allowed | 1.500 | NE ↑ |
+| edge.off_vs_def.successes | 1.137 | NE ↑ |
+| edge.def_vs_off.successes | 1.076 | NE ↑ |
+| edge.team_vs_team.rz_trips | 1.000 | NE ↑ |
+| edge.team_vs_team.rz_td_allowed | -1.000 | CAR ↑ |
+| edge.team_vs_team.rz_td | 1.000 | NE ↑ |
+| edge.def_vs_off.avg_start_yardline_100_off | -0.549 | CAR ↑ |
+| edge.off_vs_def.rz_drives | -0.500 | CAR ↑ |
+| edge.def_vs_off.rz_drives | -0.500 | CAR ↑ |
+| edge.team_vs_team.rz_empty | 0.500 | NE ↑ |
+| edge.def_vs_off.ppd_points | -0.410 | CAR ↑ |
+| edge.def_vs_off.ppd_basic | -0.410 | CAR ↑ |

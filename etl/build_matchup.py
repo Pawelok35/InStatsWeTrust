@@ -335,10 +335,18 @@ def build_matchup_row(team_features: pd.DataFrame, home: str, away: str) -> pd.D
     return pd.DataFrame([data])
 
 
-def _edge_direction_tag(x: float) -> str:
+def _edge_direction_tag(x: float, home: str | None = None, away: str | None = None) -> str:
     if pd.isna(x):
         return ""
-    return "HOME ↑" if x > 0 else ("AWAY ↑" if x < 0 else "EVEN")
+    # (opcjonalnie zamień skróty na pełne nazwy; patrz krok 4)
+    if x > 0:
+        return f"{home} ↑" if home else "HOME ↑"
+    elif x < 0:
+        return f"{away} ↑" if away else "AWAY ↑"
+    else:
+        return "EVEN"
+
+
 
 def _zscore_series(s: pd.Series) -> pd.Series:
     m = s.mean()
@@ -570,7 +578,7 @@ def build_comparison_table(matchup: pd.DataFrame,
             "home": hval,
             "away": aval,
             "edge": edge_val,
-            "dir": _edge_direction_tag(edge_val),
+            "dir": _edge_direction_tag(edge_val, matchup["home"].iloc[0], matchup["away"].iloc[0]),
             "z": _league_z_for_edge(col, matchup, team_features)
         })
 
@@ -643,15 +651,22 @@ PREFIX_LABELS = {
     "team_vs_team": "Team vs Team",
 }
 
-def build_scorecard_df(matchup: pd.DataFrame, max_rows: int = 12) -> pd.DataFrame:
-    if matchup.empty:
+def build_scorecard_df(matchup, max_rows=12, home=None, away=None, team_names=None):
+    """
+    Zwraca DataFrame z kolumnami: metric | edge | dir
+    - home/away: skróty (np. 'LA', 'IND') albo pełne nazwy; jeśli podasz dict team_names, to zmapuje do pełnych.
+    """
+    import pandas as pd
+
+    if matchup is None or matchup.empty:
         return pd.DataFrame(columns=["metric", "edge", "dir"])
 
+    # Złapanie kolumn edge.*
     edge_cols = [c for c in matchup.columns if c.startswith("edge.")]
     if not edge_cols:
         return pd.DataFrame(columns=["metric", "edge", "dir"])
 
-    # Heurystyka wyboru „kluczowych” metryk (tak jak wcześniej)
+    # Heurystyka wyboru „kluczowych” metryk (bez zmian)
     KEY_HINTS = [
         "epa_play_all", "epa_all", "epa/play", "epa_play",
         "epa_play_run", "epa_run", "epa_rush", "epa_play_pass", "epa_pass",
@@ -665,37 +680,57 @@ def build_scorecard_df(matchup: pd.DataFrame, max_rows: int = 12) -> pd.DataFram
         "ppd", "td_drives", "rz_drives", "yds_per_drive", "time_per_drive",
     ]
 
+    # Wartości krawędzi dla pojedynczego matchupu
     s = matchup[edge_cols].iloc[0].dropna()
     if s.empty:
         return pd.DataFrame(columns=["metric", "edge", "dir"])
 
-    keep = [idx for idx in s.index if any(h in idx.lower() for h in KEY_HINTS)]
-    if not keep:
-        keep = list(s.index)  # fallback: jeśli nie ma trafień, pokaż cokolwiek
+    # Filtr po hintach
+    idx_keep = [idx for idx in s.index if any(h in idx.lower() for h in KEY_HINTS)]
+    if not idx_keep:
+        idx_keep = list(s.index)  # fallback: pokaż cokolwiek
 
+    # Przygotuj nazwy drużyn (mapa skrót -> pełna nazwa, jeśli podano)
+    def _name(tag):
+        if not tag:
+            return None
+        if team_names and tag in team_names:
+            return team_names[tag]
+        return tag
+
+    home_name = _name(home)
+    away_name = _name(away)
+
+    # Funkcja budująca „Dir” z nazwą drużyny
+    def _dir_with_team(x):
+        if pd.isna(x):
+            return ""
+        if x > 0:
+            return f"{home_name if home_name else 'HOME'} ↑"
+        if x < 0:
+            return f"{away_name if away_name else 'AWAY'} ↑"
+        return "EVEN"
+
+    # Sort po |edge| i reset indeksu na kolumnę 'metric'
     df = (
-        s.loc[keep].rename("edge").to_frame()
+        s.loc[idx_keep]
+         .rename("edge")
+         .to_frame()
          .assign(abs=lambda d: d["edge"].abs())
          .sort_values("abs", ascending=False)
          .drop(columns=["abs"])
          .head(max_rows)
-         .copy()
+         .reset_index()
+         .rename(columns={"index": "metric"})
     )
 
-    def _label(col: str) -> str:
-        base = col.replace("edge.", "")
-        if "." in base:
-            prefix, stem = base.split(".", 1)
-        else:
-            prefix, stem = "edge", base
-        prefix_nice = PREFIX_LABELS.get(prefix, prefix)
-        stem_nice = METRIC_LABELS.get(stem, stem)
-        return f"{prefix_nice} · {stem_nice}"
+    # Kolumna z kierunkiem i nazwą drużyny
+    df["dir"] = df["edge"].apply(_dir_with_team)
 
-    df.insert(0, "metric", df.index.map(_label))
-    df["dir"] = df["edge"].apply(_edge_direction_tag)
-    df = df[["metric", "edge", "dir"]].reset_index(drop=True)
-    return df
+    # Tylko potrzebne kolumny, w poprawnej kolejności
+    return df[["metric", "edge", "dir"]]
+
+
 
 def export_scorecard_md(df: pd.DataFrame, path: str) -> None:
     if df is None or df.empty:
@@ -1145,6 +1180,19 @@ def _normalize_team_features_per_game(team_features: pd.DataFrame, games_played:
 
     return tf.drop(columns=["games_played"], errors="ignore")
 
+TEAM_NAMES = {
+    "LA": "Los Angeles Rams",
+    "IND": "Indianapolis Colts",
+    "BUF": "Buffalo Bills",
+    "NO": "New Orleans Saints",
+    "KC": "Kansas City Chiefs",
+    "BAL": "Baltimore Ravens",
+    "NYG": "New York Giants",
+    "LAC": "Los Angeles Chargers",
+    "SF": "San Francisco 49ers",
+    "JAX": "Jacksonville Jaguars",
+    # ... resztę 32 drużyn możesz dopisać
+}
 
 def main():
     ap = argparse.ArgumentParser(description="Build a matchup comparison using season-to-date metrics (through week-1).")
@@ -1157,7 +1205,7 @@ def main():
     ap.add_argument("--top", type=int, default=20, help="How many top edges to display")
     ap.add_argument("--min_abs", type=float, default=0.5, help="Min absolute edge to display")
     ap.add_argument("--include", type=str, default=None, help="Filter edge columns by substring (e.g., off_vs_def)")
-    ap.add_argument("--score_n", type=int, default=17, help="How many key edges to show in scorecard")
+    ap.add_argument("--score_n", type=int, default=21, help="How many key edges to show in scorecard")
     ap.add_argument("--normalize",type=str,choices=["none", "per_game"],default="none",help="Normalization mode for sum-like metrics (default: none).")
     ap.add_argument("--legend", action="store_true", help="Print a one-line legend above the scorecard")
     ap.add_argument("--export_md", type=str, default=None, help="Path to save the scorecard as a Markdown file")
@@ -1212,11 +1260,19 @@ def main():
     pretty_print_edges(mu, feats, top_n=args.top, min_abs=args.min_abs, include=args.include, include_regex=args.include_regex, sort_mode=args.sort)
 
 
-        # Legend + Scorecard
+    # Legend + Scorecard
     if args.legend:
         print("\n" + SCORECARD_LEGEND + "\n")
 
-    score_df = build_scorecard_df(mu, max_rows=args.score_n)
+    # przekaż skróty i (opcjonalnie) mapę pełnych nazw
+    score_df = build_scorecard_df(
+        mu,
+        max_rows=args.score_n,
+        home=args.home,
+        away=args.away,
+        team_names=TEAM_NAMES  # opcjonalnie – jeśli chcesz pełne nazwy
+    )
+
     if not score_df.empty:
         print("\nScorecard (key edges):\n")
         with pd.option_context("display.max_rows", None, "display.max_colwidth", 120):
