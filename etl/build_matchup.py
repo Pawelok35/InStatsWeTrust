@@ -19,6 +19,12 @@ import sys
 
 import numpy as np
 import pandas as pd
+def normalize_team(team_code: str) -> str:
+    aliases = {
+        "LA": "LAR",   # Los Angeles Rams
+    }
+    return aliases.get(team_code.upper(), team_code.upper())
+
 
 ID_COLS = {"season", "week", "team", "side", "season_type", "game_id", "opponent", "home_away"}
 TEAM_ALIASES = ["team", "posteam", "defteam", "club", "club_code", "abbr", "Team"]
@@ -1240,14 +1246,14 @@ def main():
         gp = _compute_games_played(in_dir, season=args.season, week=args.week)
         feats = _normalize_team_features_per_game(feats, gp)
 
-    mu = build_matchup_row(feats, home=args.home, away=args.away)
+    mu = build_matchup_row(feats, home=normalize_team(args.home), away=normalize_team(args.away))
     mu.insert(0, "week", args.week)
     mu.insert(0, "season", args.season)
 
     if out_path is None:
         out_dir = in_dir / "matchups"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{args.home}_{args.away}_w{args.week}_{args.season}.csv"
+        out_path = out_dir / f"{normalize_team(args.home)}_{normalize_team(args.away)}_w{args.week}_{args.season}.csv"
     else:
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1268,8 +1274,9 @@ def main():
     score_df = build_scorecard_df(
         mu,
         max_rows=args.score_n,
-        home=args.home,
-        away=args.away,
+        home=normalize_team(args.home),
+        away=normalize_team(args.away),
+
         team_names=TEAM_NAMES  # opcjonalnie – jeśli chcesz pełne nazwy
     )
 

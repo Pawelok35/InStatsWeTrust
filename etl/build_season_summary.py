@@ -7,46 +7,31 @@ import numpy as np
 def _read_any(p: Path) -> pd.DataFrame:
     return pd.read_parquet(p) if p.suffix.lower() in {".parquet",".pq"} else pd.read_csv(p, low_memory=False)
 
-def _numcol(df: pd.DataFrame, name: str, default: float = 0.0) -> pd.Series:
-    """Zwraca kolumnę numeryczną; jeśli brak w df, zwraca serię z default."""
-    if name in df.columns:
-        return pd.to_numeric(df[name], errors="coerce")
-    return pd.Series(default, index=df.index, dtype="float64")
-
-def _bincol(df: pd.DataFrame, name: str) -> pd.Series:
-    """Zwraca kolumnę binarną (0/1); brak → zera."""
-    return _numcol(df, name, 0.0).fillna(0).astype(int)
-
 def _explosive_mask(df: pd.DataFrame) -> pd.Series:
-    yd = _numcol(df, "yards_gained", 0.0).fillna(0)
-    is_pass = _bincol(df, "is_pass")
-    is_rush = _bincol(df, "is_rush")
+    yd = pd.to_numeric(df.get("yards_gained"), errors="coerce").fillna(0)
+    is_pass = pd.to_numeric(df.get("is_pass"), errors="coerce").fillna(0).astype(int)
+    is_rush = pd.to_numeric(df.get("is_rush"), errors="coerce").fillna(0).astype(int)
     return ((is_pass == 1) & (yd >= 20)) | ((is_rush == 1) & (yd >= 10))
 
 def build_off_weekly(df: pd.DataFrame) -> pd.DataFrame:
-    st = _bincol(df, "st_play")  # brak → 0
+    st = pd.to_numeric(df.get("st_play"), errors="coerce").fillna(0).astype(int)
     off = df.loc[st == 0].copy()
-
-    off["success"] = _numcol(off, "success")
-    off["epa"] = _numcol(off, "epa")
-    off["down"] = _numcol(off, "down")
-    off["yardline_100"] = _numcol(off, "yardline_100")
-    off["is_pass"] = _bincol(off, "is_pass")
-    off["is_rush"] = _bincol(off, "is_rush")
-    off["interception"] = _bincol(off, "interception")
-    off["fumble"] = _bincol(off, "fumble")
-    off["yards_gained"] = _numcol(off, "yards_gained", 0.0).fillna(0)
-
-    need_keys = {"season","week","posteam"}
-    if not need_keys.issubset(off.columns):
-        missing = need_keys - set(off.columns)
-        raise SystemExit(f"❌ Wejście musi zawierać kolumny {need_keys}; brak: {missing}")
+    off["success"] = pd.to_numeric(off.get("success"), errors="coerce")
+    off["epa"] = pd.to_numeric(off.get("epa"), errors="coerce")
+    off["down"] = pd.to_numeric(off.get("down"), errors="coerce")
+    off["yardline_100"] = pd.to_numeric(off.get("yardline_100"), errors="coerce")
+    off["is_pass"] = pd.to_numeric(off.get("is_pass"), errors="coerce").fillna(0).astype(int)
+    off["is_rush"] = pd.to_numeric(off.get("is_rush"), errors="coerce").fillna(0).astype(int)
+    off["interception"] = pd.to_numeric(off.get("interception"), errors="coerce").fillna(0).astype(int)
+    off["fumble"] = pd.to_numeric(off.get("fumble"), errors="coerce").fillna(0).astype(int)
+    off["yards_gained"] = pd.to_numeric(off.get("yards_gained"), errors="coerce").fillna(0)
 
     grp = off.groupby(["season","week","posteam"], dropna=False)
     def agg(g: pd.DataFrame) -> pd.Series:
-        e=g["epa"]; s=g["success"]; d=g["down"]; y=g["yardline_100"]
-        ip=g["is_pass"]; ir=g["is_rush"]; inter=g["interception"]; fmb=g["fumble"]; yd=g["yards_gained"]
-        expl=_explosive_mask(g)
+        e = g["epa"]; s = g["success"]; d = g["down"]; y = g["yardline_100"]
+        ip = g["is_pass"]; ir = g["is_rush"]
+        inter = g["interception"]; fmb = g["fumble"]; yd = g["yards_gained"]
+        expl = _explosive_mask(g)
         return pd.Series({
             "plays": int(len(g)),
             "avg_epa": float(e.mean(skipna=True)),
@@ -65,32 +50,28 @@ def build_off_weekly(df: pd.DataFrame) -> pd.DataFrame:
             "turnover_epa": float(e[(inter==1)|(fmb==1)].sum(skipna=True)),
             "avg_start_yardline_100": float(y.mean(skipna=True)),
         })
-    return grp.apply(agg).reset_index().rename(columns={"posteam":"team"})
+    out = grp.apply(agg).reset_index().rename(columns={"posteam":"team"})
+    return out
 
 def build_def_weekly(df: pd.DataFrame) -> pd.DataFrame:
-    st = _bincol(df, "st_play")
+    st = pd.to_numeric(df.get("st_play"), errors="coerce").fillna(0).astype(int)
     deff = df.loc[st == 0].copy()
-
-    deff["epa"] = _numcol(deff, "epa")
-    deff["success"] = _numcol(deff, "success")
-    deff["down"] = _numcol(deff, "down")
-    deff["yardline_100"] = _numcol(deff, "yardline_100")
-    deff["is_pass"] = _bincol(deff, "is_pass")
-    deff["is_rush"] = _bincol(deff, "is_rush")
-    deff["interception"] = _bincol(deff, "interception")
-    deff["fumble"] = _bincol(deff, "fumble")
-    deff["yards_gained"] = _numcol(deff, "yards_gained", 0.0).fillna(0)
-
-    need_keys = {"season","week","defteam"}
-    if not need_keys.issubset(deff.columns):
-        missing = need_keys - set(deff.columns)
-        raise SystemExit(f"❌ Wejście musi zawierać kolumny {need_keys}; brak: {missing}")
+    deff["epa"] = pd.to_numeric(deff.get("epa"), errors="coerce")
+    deff["success"] = pd.to_numeric(deff.get("success"), errors="coerce")
+    deff["down"] = pd.to_numeric(deff.get("down"), errors="coerce")
+    deff["yardline_100"] = pd.to_numeric(deff.get("yardline_100"), errors="coerce")
+    deff["is_pass"] = pd.to_numeric(deff.get("is_pass"), errors="coerce").fillna(0).astype(int)
+    deff["is_rush"] = pd.to_numeric(deff.get("is_rush"), errors="coerce").fillna(0).astype(int)
+    deff["interception"] = pd.to_numeric(deff.get("interception"), errors="coerce").fillna(0).astype(int)
+    deff["fumble"] = pd.to_numeric(deff.get("fumble"), errors="coerce").fillna(0).astype(int)
+    deff["yards_gained"] = pd.to_numeric(deff.get("yards_gained"), errors="coerce").fillna(0)
 
     grp = deff.groupby(["season","week","defteam"], dropna=False)
     def agg(g: pd.DataFrame) -> pd.Series:
-        e=g["epa"]; s=g["success"]; d=g["down"]; y=g["yardline_100"]
-        ip=g["is_pass"]; ir=g["is_rush"]; inter=g["interception"]; fmb=g["fumble"]; yd=g["yards_gained"]
-        expl=_explosive_mask(g)
+        e = g["epa"]; s = g["success"]; d = g["down"]; y = g["yardline_100"]
+        ip = g["is_pass"]; ir = g["is_rush"]
+        inter = g["interception"]; fmb = g["fumble"]; yd = g["yards_gained"]
+        expl = _explosive_mask(g)
         return pd.Series({
             "plays_allowed": int(len(g)),
             "avg_epa_allowed": float(e.mean(skipna=True)),
@@ -109,7 +90,8 @@ def build_def_weekly(df: pd.DataFrame) -> pd.DataFrame:
             "turnover_epa_forced": float(e[(inter==1)|(fmb==1)].sum(skipna=True)),
             "avg_start_yardline_100_faced": float(y.mean(skipna=True)),
         })
-    return grp.apply(agg).reset_index().rename(columns={"defteam":"team"})
+    out = grp.apply(agg).reset_index().rename(columns={"defteam":"team"})
+    return out
 
 def main():
     ap = argparse.ArgumentParser()
@@ -119,9 +101,6 @@ def main():
     args = ap.parse_args()
 
     df = _read_any(args.in_pbp)
-    if "season" not in df.columns or "week" not in df.columns:
-        raise SystemExit("❌ PBP musi zawierać kolumny 'season' i 'week'.")
-
     df = df[df["season"] == args.season].copy()
 
     off = build_off_weekly(df)

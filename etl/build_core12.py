@@ -22,6 +22,15 @@ import argparse
 from pathlib import Path
 import pandas as pd
 import numpy as np
+# --- Optional clutch import (graceful fallback) ---
+try:
+    from etl.metrics.clutch_index import compute_team_clutch_metrics  # type: ignore
+    _HAS_CLUTCH = True
+except Exception:
+    _HAS_CLUTCH = False
+    def compute_team_clutch_metrics(*args, **kwargs):
+        import pandas as pd
+        return pd.DataFrame(columns=["season","team","clutch_index_0_100"])
 
 from etl.metrics.clutch_index import compute_team_clutch_metrics
 
@@ -208,7 +217,7 @@ def main():
 
     # 1) (Optional) Compute Clutch Index if pbp is provided
     clutch = None
-    if args.pbp_csv is not None:
+    if args.pbp_csv is not None and _HAS_CLUTCH:
         if not args.pbp_csv.exists():
             raise FileNotFoundError(f"--pbp_csv not found: {args.pbp_csv}")
         if args.pbp_csv.suffix == ".parquet":

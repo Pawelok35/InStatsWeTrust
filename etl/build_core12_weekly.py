@@ -2,7 +2,7 @@
 import pandas as pd
 from pathlib import Path
 
-SEASON = 2024
+SEASON = 2025
 IN_DIR = Path("data/processed")
 OFF = IN_DIR / f"epa_offense_summary_{SEASON}_weekly.csv"
 DEF = IN_DIR / f"epa_defense_summary_{SEASON}_weekly.csv"
@@ -86,9 +86,17 @@ def main():
         raise SystemExit("❌ Wejście musi zawierać kolumny season, week, team.")
 
     df = off.merge(deff, on=["season","week","team"], how="inner")
-    df = df.fillna(0.0)
+
+    # — zabezpieczenie: team to zawsze string
+    df["team"] = df["team"].astype(str)
+
+    # — wypełniamy TYLKO kolumny numeryczne
+    num_cols = df.select_dtypes(include=["number"]).columns
+    df[num_cols] = df[num_cols].fillna(0.0)
+
     df = add_net_metrics(df)
     df = add_momentum(df)
+
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(OUT, index=False)

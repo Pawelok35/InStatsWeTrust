@@ -1,0 +1,42 @@
+{
+  "season": 2025,
+  "week": 6,
+  "generated_at": "2025-10-16T09:45:00Z",
+  "games": [
+    {
+      "home": "Cincinnati Bengals",
+      "away": "Pittsburgh Steelers",
+      "kickoff": "2025-10-19T18:00:00Z",
+      "signals": { "side": "CIN -3.5", "total": "Over 46.0", "confidence": 0.57 },
+      "edges": [
+        { "name": "Hidden Yards Advantage", "team": "PIT", "value": 0.18 },
+        { "name": "3rd Down Defense", "team": "PIT", "value": 0.30 }
+      ],
+      "risks": [
+        "Explosive variance due to big plays",
+        "Turnover volatility (medium)"
+      ],
+      "why": [
+        "Bengals hold better RZ conversion rate",
+        "Steelers defense thrives on hidden yards and field position"
+      ]
+    },
+    {
+      "home": "Arizona Cardinals",
+      "away": "Green Bay Packers",
+      "kickoff": "2025-10-19T20:25:00Z",
+      "signals": { "side": "ARI +6.5", "total": "Over 44.0", "confidence": 0.55 },
+      "edges": [
+        { "name": "Explosive Runs", "team": "ARI", "value": 0.09 }
+      ],
+      "risks": [
+        "QB inconsistency",
+        "High variance on defense"
+      ],
+      "why": [
+        "Speed advantage vs GB linebackers",
+        "Matchup fits for WR screens"
+      ]
+    }
+  ]
+}
