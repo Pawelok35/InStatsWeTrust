@@ -32,7 +32,6 @@ except Exception:
         import pandas as pd
         return pd.DataFrame(columns=["season","team","clutch_index_0_100"])
 
-from etl.metrics.clutch_index import compute_team_clutch_metrics
 
 # ---- Required input columns (raw) ----
 REQ_OFF = {
@@ -301,6 +300,11 @@ def main():
     except Exception as e:
         print(f"ℹ️ Pominąłem Power Score+ (powód: {e})")
 
+        # 7) Dopisanie tygodnia do historii drużyn (32×N)
+    from etl.utils_team_history import update_team_history
+    out_df = core12.copy()
+    WEEK = 6  # opcjonalnie ustaw, jeśli uruchamiasz per tydzień (np. 6)
+    update_team_history(out_df, season=args.season, week=WEEK or 0, store="data/processed/teams")
 
 
 if __name__ == "__main__":

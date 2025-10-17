@@ -22,7 +22,6 @@ Metrics (per side O/D):
 
 Schema-flexible: works with nflfastR-like columns if present; otherwise falls back to heuristics.
 """
-
 import argparse
 import sys
 from pathlib import Path
@@ -533,6 +532,31 @@ def main(args=None):
                 .head(5)
         )
         print("\n📈 Top-5 PPD (points per drive) per side:\n", preview)
+
+
+           # 7) Dopisanie tygodnia do historii drużyn (Drive Efficiency, szeroki format 32×N)
+    from etl.utils_team_history import update_team_history
+
+    # team: po sezonie i drużynie mamy wiersze 'off' i 'def' -> pivot do szerokiego 32×N
+    wide = team.pivot(index=["season","team"], columns="side")
+    # Spłaszczenie MultiIndex kolumn: ('ppd_points','off') -> 'drives__ppd_points_off'
+    wide.columns = [f"drives__{m}_{side}" for (m, side) in wide.columns.to_flat_index()]
+    wide = wide.reset_index()
+
+    # dołóż week (WEEK ustawiony wcześniej; jeśli nie – zapisz 0)
+    try:
+        WEEK  # noqa: F821
+    except NameError:
+        WEEK = 6
+    wide["week"] = WEEK or 0
+
+    # ułóż kolumny i zapisz
+    non_feat = ["season","week","team"]
+    feat = [c for c in wide.columns if c not in non_feat]
+    out_df = wide[non_feat + feat]
+
+    update_team_history(out_df, season=ns.season, week=(WEEK or 0), store="data/processed/teams")
+
 
 if __name__ == "__main__":
     sys.exit(main())
