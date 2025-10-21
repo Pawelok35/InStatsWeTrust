@@ -17,12 +17,13 @@ from pydantic import BaseModel, Field
 
 TAB_TITLES = [
     "1) Profil drużyn [2024 → 2025]",
-    "2) Top przewagi (Top 12 Edges — Week 6, 2025)",
+    "2) Top przewagi (Top 12 Edges – Week 6, 2025)",
     "3) Diagnoza matchupu (Game Dynamics)",
     "4) Model punktacji i prognoza",
     "5) Scenariusze gry (Game Scripts)",
     "6) Ryzyka i punkty krytyczne (Swing Factors)",
     "7) Prognoza i typowanie (Final pick)",
+    "8) Hidden Trends (micro-edges)",
 ]
 
 # aliasy nagłówków (PL/EN) — możesz dopisywać własne frazy/regexy
@@ -43,7 +44,7 @@ def _build_header_regex() -> re.Pattern:
     - lub aliasy z HEADER_ALIASES
     (używamy grup nienazwanych, żeby uniknąć kolizji nazw)
     """
-    numbered = r"^[ \t]*([1-7])\)[ \t]+(.+?)\s*$"
+    numbered = r"^[ \t]*([1-8])\)[ \t]+(.+?)\s*$"
     alias_parts: List[str] = []
     for pats in HEADER_ALIASES.values():
         for p in pats:
@@ -57,7 +58,7 @@ HEADER_RE = _build_header_regex()
 def normalize_title(raw: str) -> str:
     """Mapuje znaleziony nagłówek do kanonicznego tytułu z TAB_TITLES."""
     raw_clean = (raw or "").strip()
-    m = re.match(r"^[ \t]*([1-7])\)", raw_clean)
+    m = re.match(r"^[ \t]*([1-8])\)", raw_clean)
     if m:
         idx = int(m.group(1))
         return TAB_TITLES[idx - 1]

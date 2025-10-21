@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List, Dict, Tuple
+from typing import Iterable, List, Dict, Tuple, Optional
 import pandas as pd
 
 
@@ -13,6 +13,64 @@ NFL_TEAMS_3 = {
     "IND","JAX","KC","LAC","LAR","LV","MIA","MIN","NE","NO","NYG","NYJ","PHI",
     "PIT","SEA","SF","TB","TEN","WAS"
 }
+
+# Canonicalization map for legacy or ambiguous aliases
+TEAM_ALIASES: Dict[str, Optional[str]] = {
+    # Explicit mappings
+    "LA": "LAR",              # ambiguous -> default to Rams per project convention
+    "LA-CHARGERS": "LAC",
+    "LOS ANGELES CHARGERS": "LAC",
+    "LOS ANGELES RAMS": "LAR",
+    "STL": "LAR",            # legacy Rams
+    "ST. LOUIS RAMS": "LAR",
+    "SD": "LAC",             # legacy Chargers
+    "SAN DIEGO CHARGERS": "LAC",
+    "OAK": "LV",             # legacy Raiders
+    "OAKLAND RAIDERS": "LV",
+    "WSH": "WAS",            # legacy Washington
+    "REDSKINS": "WAS",
+    "JAC": "JAX",
+    "NAN": None,              # invalid placeholder -> drop
+}
+
+
+def normalize_team_code(code: str | None) -> Optional[str]:
+    """Return canonical 2-3 letter team code or None if invalid.
+
+    - Uppercases and strips whitespace
+    - Maps known aliases (e.g., LA -> LAR, SD -> LAC, OAK -> LV)
+    - Returns None for invalid placeholders (e.g., NAN)
+    """
+    if code is None:
+        return None
+    c = str(code).strip().upper()
+    if c in NFL_TEAMS_3:
+        return c
+    if c in TEAM_ALIASES:
+        mapped = TEAM_ALIASES[c]
+        return mapped if (mapped in NFL_TEAMS_3 or mapped is None) else mapped
+    # Sometimes full names slip in; try a minimal full-name mapping
+    full_to_abbr = {
+        "ARIZONA CARDINALS": "ARI", "ATLANTA FALCONS": "ATL",
+        "BALTIMORE RAVENS": "BAL", "BUFFALO BILLS": "BUF",
+        "CAROLINA PANTHERS": "CAR", "CHICAGO BEARS": "CHI",
+        "CINCINNATI BENGALS": "CIN", "CLEVELAND BROWNS": "CLE",
+        "DALLAS COWBOYS": "DAL", "DENVER BRONCOS": "DEN",
+        "DETROIT LIONS": "DET", "GREEN BAY PACKERS": "GB",
+        "HOUSTON TEXANS": "HOU", "INDIANAPOLIS COLTS": "IND",
+        "JACKSONVILLE JAGUARS": "JAX", "KANSAS CITY CHIEFS": "KC",
+        "LOS ANGELES CHARGERS": "LAC", "LOS ANGELES RAMS": "LAR",
+        "LAS VEGAS RAIDERS": "LV", "MIAMI DOLPHINS": "MIA",
+        "MINNESOTA VIKINGS": "MIN", "NEW ENGLAND PATRIOTS": "NE",
+        "NEW ORLEANS SAINTS": "NO", "NEW YORK GIANTS": "NYG",
+        "NEW YORK JETS": "NYJ", "PHILADELPHIA EAGLES": "PHI",
+        "PITTSBURGH STEELERS": "PIT", "SEATTLE SEAHAWKS": "SEA",
+        "SAN FRANCISCO 49ERS": "SF", "TAMPA BAY BUCCANEERS": "TB",
+        "TENNESSEE TITANS": "TEN", "WASHINGTON COMMANDERS": "WAS",
+    }
+    if c in full_to_abbr:
+        return full_to_abbr[c]
+    return c if c in NFL_TEAMS_3 else None
 
 
 def _ensure_store(store: str | Path) -> Path:

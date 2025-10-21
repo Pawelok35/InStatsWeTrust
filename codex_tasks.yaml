@@ -1,0 +1,692 @@
+# codex_tasks.yaml
+# Top-level component map follows the blueprint layers and surfaces.
+# Milestones reflect publishable increments traceable to the Blueprint.
+
+milestones:
+  - id: mvp_pipeline
+    title: MVP – Deterministic Weekly Pipeline (L0→L3) and Catalog
+    # Refs: §B, §C, §D
+  - id: mvp_api
+    title: MVP – /v1 API with Hot Cache + Versioned Responses
+    # Refs: §F
+  - id: mvp_ui
+    title: MVP – Metrics Explorer (Casual), Tooltips, a11y/i18n base
+    # Refs: §G
+  - id: core_indices
+    title: Core – EdgeIndex, Trend/Momentum artifacts & visualizations
+    # Refs: §D, §F, §G
+  - id: hardening_and_release
+    title: Hardening & Release – observability, security, performance, a11y
+    # Refs: §H
+
+# ────────────────────────────────────────────────────────────────────────────────
+# FOUNDATIONS & GOVERNANCE (new tasks to reach 100% DoD)
+# ────────────────────────────────────────────────────────────────────────────────
+foundations:
+  - id: T0a
+    milestone: mvp_pipeline
+    title: Document official NFL PBP source spec
+    path: etl/sources/nfl_pbp.md
+    description: Define data origin, formats, cadence, licensing/EULA, rate limits, auth. Include schema sample and update policy.
+    acceptance_criteria:
+      - Doc covers endpoint(s), fields, auth, and usage constraints
+      - Versioned with changelog section
+    tests: []
+    dependencies: []
+    risk_notes:
+      - Source TOS changes; keep revision log
+    # Refs: §A, §B
+
+  - id: T0b
+    milestone: mvp_pipeline
+    title: NFL PBP adapter + schema guard
+    path: etl/sources/nfl_pbp_adapter.py
+    description: Thin adapter to fetch/stream PBP; validate schema against jsonschema; raise on drift.
+    acceptance_criteria:
+      - jsonschema in etl/sources/schema/pbp.json
+      - Fails fast on unexpected/nullable shifts
+    tests:
+      - Unit tests for required fields, type coercion
+    dependencies: [T0a]
+    risk_notes:
+      - Silent drift; add logging of field deltas
+    # Refs: §B
+
+  - id: T0c
+    milestone: hardening_and_release
+    title: ADR bootstrap (edges signing, caching tiers)
+    path: docs/adr/
+    description: Create ADR-003 (Edge sign conventions) and ADR-004 (Hot/Warm/Cold cache architecture) with rationale and decisions.
+    acceptance_criteria:
+      - docs/adr/ADR-003.md and ADR-004.md exist
+      - PRs reference ADRs when related code changes occur
+    tests: []
+    dependencies: []
+    risk_notes:
+      - Divergence from ADR; enforce in PR template
+    # Refs: Appendices C
+
+  - id: T0d
+    milestone: hardening_and_release
+    title: PR template & ADR check
+    path: .github/pull_request_template.md
+    description: Require “Related ADRs” checklist and “Blueprint section” cross-refs in each PR.
+    acceptance_criteria:
+      - Template renders in GitHub UI
+      - CI job fails if ADRs not referenced on material changes
+    tests: []
+    dependencies: [T0c]
+    risk_notes:
+      - False positives; allow override tag with maintainer approval
+    # Refs: §H, Appendices C
+
+  - id: T0e
+    milestone: mvp_pipeline
+    title: Deterministic fixtures & golden tests seed
+    path: tests/fixtures/week_sample/
+    description: Pin small PBP sample (1–2 games) and golden Parquet outputs for L0→L3 to ensure reproducibility.
+    acceptance_criteria:
+      - make target `test-golden` compares outputs byte/row-level
+    tests:
+      - Golden comparison for T2–T7 stages
+    dependencies: [T0b]
+    risk_notes:
+      - Regenerate on schema change with explicit review
+    # Refs: §B, §H
+
+# ────────────────────────────────────────────────────────────────────────────────
+# DATA PIPELINE
+# ────────────────────────────────────────────────────────────────────────────────
+data_pipeline:
+  - id: T1
+    milestone: mvp_pipeline
+    title: Scaffold Prefect weekly build flow (parameters, logging, version)
+    path: etl/flows/weekly_build.py
+    description: Create Prefect flow with steps (ingest→clean→derive→metrics→validate→promote); emit job_run_id and snapshot version YYYY.WW.build.
+    acceptance_criteria:
+      - Flow accepts season/week; writes manifest with version & git SHA
+      - Logs contain job_run_id; dry-run flag skips promote
+    tests:
+      - Unit test flow parameters & idempotent re-run for same week
+    dependencies: [T0e]
+    risk_notes:
+      - Ensure promotion is gated by validation to avoid partial publishes
+    # Refs: §B, §H
+
+  - id: T1b
+    milestone: mvp_pipeline
+    title: Manifest generator hook in flow
+    path: etl/flows/hooks/manifest_generator.py
+    description: Hook writes data/snapshots/manifest.json on canary/publish with {version, build_time, git_sha}.
+    acceptance_criteria:
+      - Manifest updated on each promote; schema stable
+    tests:
+      - Verify modal reads latest manifest (via T26)
+    dependencies: [T1]
+    risk_notes:
+      - Race between write and cache warmers; order ops
+    # Refs: §H
+
+  - id: T2
+    milestone: mvp_pipeline
+    title: L0 ingest to immutable Parquet with checksums
+    path: etl/stages/l0_ingest.py
+    description: Ingest official PBP into L0 Parquet; append-only; write checksum & manifest.
+    acceptance_criteria:
+      - Parquet files partitioned by season/week
+      - Checksums persisted; no mutations to existing files
+    tests:
+      - Golden file count & checksum stability for sample weeks
+    dependencies: [T1, T0b]
+    risk_notes:
+      - Source schema drift; guard with schema validation
+    # Refs: §B
+
+  - id: T3
+    milestone: mvp_pipeline
+    title: L1 clean & normalize keys/types and base EPA fields
+    path: etl/stages/l1_clean_normalize.py
+    description: Standardize team codes, enums (H/A), types; compute base EPA per play; persist Parquet.
+    acceptance_criteria:
+      - Key domains validated (team codes, game_id uniqueness)
+      - EPA columns present with documented units
+    tests:
+      - Unit tests for code normalization & EPA spot checks
+    dependencies: [T2]
+    risk_notes:
+      - Mis-normalized team aliases can cascade to edges
+    # Refs: §B, §C
+
+  - id: T4
+    milestone: mvp_pipeline
+    title: L2 drive/special-teams derivations
+    path: etl/stages/l2_derive_drives_special.py
+    description: Build drive table (start/finish, result, plays, epa), special teams/hidden yards, field position.
+    acceptance_criteria:
+      - Derived tables saved; field position metrics present
+    tests:
+      - Drive reconstruction integrity vs play sums
+    dependencies: [T3]
+    risk_notes:
+      - Off-by-one on possessions; verify with opponent balances
+    # Refs: §B, §C
+
+  - id: T5
+    milestone: mvp_pipeline
+    title: Metric catalog – YAML schema & loader
+    path: etl/metrics/metric_catalog.yaml
+    description: Author canonical YAML for 110 metrics (name, formula, direction, normalization, interpretation).
+    acceptance_criteria:
+      - Schema validates; 50 User metrics fully defined; placeholders only with TODO notes
+    tests:
+      - Lint schema; validate direction & norm tags
+    dependencies: [T4]
+    risk_notes:
+      - Incomplete definitions block compiler
+    # Refs: §D, Appendices B
+
+  - id: T6
+    milestone: mvp_pipeline
+    title: Metrics compiler – compute team_week and team_season
+    path: etl/stages/l3_metrics_aggregate.py
+    description: Apply catalog formulas using Polars/DuckDB; write team_week & team_season Parquet with version field.
+    acceptance_criteria:
+      - 50 User metrics computed; z-scores & percentiles emitted where defined
+      - team_week has meta/opponent/home_away and quality_flags
+    tests:
+      - Golden outputs for sample week; z-score math correctness
+    dependencies: [T5]
+    risk_notes:
+      - League aggregates needed for normalization synchronization
+    # Refs: §C, §D, §E
+
+  - id: T7
+    milestone: mvp_pipeline
+    title: Validation checks & canary promotion
+    path: etl/validation/checks_teamweek.py
+    description: Completeness (all games), opponent balances, plausible ranges; if pass, mark snapshot “canary” then “promote”.
+    acceptance_criteria:
+      - Fail stops promotion; pass writes promotion marker
+    tests:
+      - Integration test simulating missing team → failure
+    dependencies: [T6]
+    risk_notes:
+      - Lax ranges can greenlight bad data; tune thresholds
+    # Refs: §H
+
+  - id: T8
+    milestone: core_indices
+    title: EdgeIndex dataset computation
+    path: etl/stages/l3_edges.py
+    description: Build game-level A vs B differential metrics for efficiency, success, RZ, 3rd down, ST, penalties, turnover, field position.
+    acceptance_criteria:
+      - edge dataset saved keyed by game_id with symmetric fields
+    tests:
+      - Diffs equal A_metric - B_metric; opponent symmetry test
+    dependencies: [T7]
+    risk_notes:
+      - Sign conventions must match UI semantics
+    # Refs: §C, §D, §F, ADR-003
+
+  - id: T9
+    milestone: core_indices
+    title: Trend & Momentum artifacts
+    path: etl/stages/l3_trend_momentum.py
+    description: Compute rolling windows, slopes, variance metrics per catalog tags; persist for API /trends.
+    acceptance_criteria:
+      - Windowed metrics present with documented window params
+    tests:
+      - Rolling correctness; variance baselines on fixtures
+    dependencies: [T7]
+    risk_notes:
+      - Early-season instability—guard with minimum sample sizes
+    # Refs: §D, §F
+
+# ────────────────────────────────────────────────────────────────────────────────
+# API
+# ────────────────────────────────────────────────────────────────────────────────
+api:
+  - id: T10
+    milestone: mvp_api
+    title: FastAPI app scaffolding + OpenAPI
+    path: api/main.py
+    description: Create FastAPI app with versioned /v1 router; include OpenAPI tags & examples.
+    acceptance_criteria:
+      - /health, /readiness endpoints; OpenAPI docs load
+    tests:
+      - Smoke tests for route availability
+    dependencies: [T7]
+    risk_notes:
+      - Forgetting readiness checks hinders deploy orchestration
+    # Refs: §F, §H
+
+  - id: T11
+    milestone: mvp_api
+    title: Data access layer with hot/warm/cold routing
+    path: api/access/data_access.py
+    description: Implement Redis hot cache (TTL ~48h), DuckDB warm store, Parquet cold path; version pin via query.
+    acceptance_criteria:
+      - Cache keys metrics:{season}:{week}:{team}; version served & echoed
+    tests:
+      - Cache hit/miss timings; cold path functional on old week
+    dependencies: [T10]
+    risk_notes:
+      - DuckDB concurrency—ensure serialization and short queries
+    # Refs: §F, ADR-004
+
+  - id: T12
+    milestone: mvp_api
+    title: GET /v1/seasons/{season}/weeks/{week}/teams/{team}/metrics
+    path: api/routes/metrics.py
+    description: Return raw + normalized values per team_week; filter by ?metrics= list; include version.
+    acceptance_criteria:
+      - Valid team resolution; normalized fields present; p95 < 200ms (hot)
+    tests:
+      - Contract tests; multiple teams/aliases; perf budget guard
+    dependencies: [T11]
+    risk_notes:
+      - Team alias mapping must be canonical
+    # Refs: §F
+
+  - id: T13
+    milestone: core_indices
+    title: GET /v1/matchups/{season}/{week}/{game_id}/edges
+    path: api/routes/edges.py
+    description: Serve EdgeIndex diffs and summary; align sign conventions with UI.
+    acceptance_criteria:
+      - Symmetric response; clear advantage indicators
+    tests:
+      - A/B swap yields negated diffs
+    dependencies: [T12, T8]
+    risk_notes:
+      - Misaligned signs break UI color semantics
+    # Refs: §F
+
+  - id: T14
+    milestone: core_indices
+    title: GET /v1/teams/{team}/trends?season=&window=
+    path: api/routes/trends.py
+    description: Serve time series + rolling windows for tagged Trend/Momentum metrics.
+    acceptance_criteria:
+      - Supports window param with defaults; returns series ordered by week
+    tests:
+      - Windowed math vs ETL artifacts
+    dependencies: [T12, T9]
+    risk_notes:
+      - Parameter validation required to avoid huge payloads
+    # Refs: §F
+
+  - id: T15
+    milestone: mvp_api
+    title: POST /v1/models/powerscore/compute
+    path: api/routes/models.py
+    description: Accept metrics+weights; compute composite per team using latest snapshot; return scores and ranks.
+    acceptance_criteria:
+      - Validates metric names against catalog; returns sorted scores
+    tests:
+      - Deterministic outputs; invalid metric rejection
+    dependencies: [T12, T5, T6]
+    risk_notes:
+      - Input validation to prevent heavy or malicious requests
+    # Refs: §F, §D
+
+  - id: T16
+    milestone: mvp_api
+    title: GET /v1/catalog/metrics
+    path: api/routes/catalog.py
+    description: Expose catalog entries (definition, direction, normalization) for UI population.
+    acceptance_criteria:
+      - Stable cached response; ETag/Last-Modified optional
+    tests:
+      - Contract test; fields presence
+    dependencies: [T5]
+    risk_notes:
+      - Catalog drift vs ETL compiler—lockstep needed
+    # Refs: §F, §D
+
+# ────────────────────────────────────────────────────────────────────────────────
+# FRONTEND
+# ────────────────────────────────────────────────────────────────────────────────
+frontend:
+  - id: T17
+    milestone: mvp_ui
+    title: Next.js app scaffold with Tailwind and mode toggle
+    path: ui/app/
+    description: Create basic layout, navigation, and mode switcher (Casual/Advanced/Pro); wire to /v1 base.
+    acceptance_criteria:
+      - App loads; mode state persisted per route
+    tests:
+      - Smoke tests; a11y checks for nav & focus
+    dependencies: [T10, T16]
+    risk_notes:
+      - Client/server boundary—no secrets in client
+    # Refs: §G
+
+  - id: T18
+    milestone: mvp_ui
+    title: Metrics Explorer (Casual mode)
+    path: ui/app/metrics/
+    description: Team/week selectors; render 50 User metrics with percentiles, green/red semantics from direction, tooltips ≤120 chars.
+    acceptance_criteria:
+      - Single-team view; rank bars; tooltips validated
+    tests:
+      - UI contract tests; axe a11y; color semantics snapshot
+    dependencies: [T12, T16, T17]
+    risk_notes:
+      - Misuse of colors for “down is good” metrics
+    # Refs: §D, §E, §G
+
+  - id: T19
+    milestone: core_indices
+    title: Game Edges Analyzer view
+    path: ui/app/edges/
+    description: Game picker; radar & diff bars vs opponent; sign-aware coloring; short insights on hover.
+    acceptance_criteria:
+      - Two-team comparison; summary edge indicator
+    tests:
+      - Visual regression; signs & labels match API
+    dependencies: [T13, T17]
+    risk_notes:
+      - Radar axes require consistent ordering
+    # Refs: §G
+
+  - id: T20
+    milestone: core_indices
+    title: Trend Tracker (lines + rolling window)
+    path: ui/app/trends/
+    description: Line charts per metric with league average overlay; window selector; “hot/cold” annotations.
+    acceptance_criteria:
+      - Rolling overlay; accessible legends; keyboard control
+    tests:
+      - Chart renders with windowed data; axe checks
+    dependencies: [T14, T17]
+    risk_notes:
+      - Overplotting; ensure readability in dark/light
+    # Refs: §G
+
+  - id: T21
+    milestone: mvp_ui
+    title: PowerScore Model Builder (compute-on-request)
+    path: ui/app/models/powerscore/
+    description: Pick metrics & weights; compute via POST endpoint; contribution bars/radar; export CSV.
+    acceptance_criteria:
+      - Weight sliders; response mapped; export works
+    tests:
+      - Input validation; deterministic results with fixed weights
+    dependencies: [T15, T16, T17]
+    risk_notes:
+      - UI must reflect normalization scale consistency
+    # Refs: §F, §G
+
+# ────────────────────────────────────────────────────────────────────────────────
+# OBSERVABILITY & SECURITY
+# ────────────────────────────────────────────────────────────────────────────────
+observability_security:
+  - id: T22
+    milestone: hardening_and_release
+    title: Structured logging & correlation IDs
+    path: observability/logging_config.py
+    description: JSONL logs with fields: timestamp, severity, module, job_run_id, version, trace_id; consistent across ETL/API.
+    acceptance_criteria:
+      - Logs visible in dev; fields present in both ETL & API
+    tests:
+      - Unit tests for log enrichment
+    dependencies: [T1, T10]
+    risk_notes:
+      - Missing IDs hinders audit trails
+    # Refs: §H
+
+  - id: T23
+    milestone: hardening_and_release
+    title: Health/readiness & Prometheus metrics
+    path: observability/health/handlers.py
+    description: /health, /readiness (S3/Redis checks); Prometheus counters/histograms for latency, cache hits, build duration.
+    acceptance_criteria:
+      - Endpoints return 200 with components OK; metrics scrapeable
+    tests:
+      - Integration test with Redis down → readiness fails
+    dependencies: [T10, T11]
+    risk_notes:
+      - False positives cause bad deploys
+    # Refs: §H
+
+  - id: T24
+    milestone: hardening_and_release
+    title: Cache invalidation & pre-warm on publish
+    path: api/cache/redis_client.py
+    description: After promote, purge old week keys; pre-warm metrics:{season}:{week}:* and common edges.
+    acceptance_criteria:
+      - Invalidate & pre-warm scripts integrated in flow
+    tests:
+      - Confirm new data visible immediately post-promote
+    dependencies: [T7, T11, T12]
+    risk_notes:
+      - Race between publish and warmers
+    # Refs: §F, ADR-004
+
+  - id: T25
+    milestone: hardening_and_release
+    title: Security hardening: CORS, rate-limits, API keys
+    path: api/main.py
+    description: Enforce origin allowlist, token bucket per IP, API key requirement for compute endpoint, TLS notes.
+    acceptance_criteria:
+      - Disallowed origins blocked; 429s under abuse
+    tests:
+      - Negative tests for CORS and rate-limits
+    dependencies: [T10, T15]
+    risk_notes:
+      - Over-restrictive CORS breaks UI if misconfigured
+    # Refs: §H
+
+  - id: T34
+    milestone: hardening_and_release
+    title: Grafana dashboards (API/ETL)
+    path: observability/grafana/
+    description: Provision latency, cache hit ratio, ETL build duration dashboards; link in README.
+    acceptance_criteria:
+      - Dashboards JSON committed; importable locally
+    tests: []
+    dependencies: [T22, T23]
+    risk_notes:
+      - Mismatched metric names; align exporter labels
+    # Refs: §H
+
+  - id: T35
+    milestone: hardening_and_release
+    title: Alert rules (Prometheus)
+    path: observability/alerts/
+    description: Alerts for API p95 latency, cache hit ratio drop, ETL validation failure.
+    acceptance_criteria:
+      - Rule files present; thresholds documented
+    tests: []
+    dependencies: [T23, T34]
+    risk_notes:
+      - Alert fatigue; tune + add quiet hours
+    # Refs: §H
+
+# ────────────────────────────────────────────────────────────────────────────────
+# CI/CD, ENV & DEPLOY (new sections)
+# ────────────────────────────────────────────────────────────────────────────────
+ci_cd:
+  - id: T29
+    milestone: hardening_and_release
+    title: CI – lint & tests
+    path: .github/workflows/lint-and-test.yml
+    description: Run ruff, mypy, pytest (incl. golden). Cache deps; fail on coverage < threshold.
+    acceptance_criteria:
+      - Workflow passes locally and in PRs
+    tests: []
+    dependencies: [T0e]
+    risk_notes:
+      - Flaky tests; stabilize fixtures
+    # Refs: §H
+
+  - id: T30
+    milestone: hardening_and_release
+    title: CI – OpenAPI & artifacts
+    path: .github/workflows/build-and-docs.yml
+    description: Export OpenAPI JSON, attach manifest.json and OpenAPI to release artifacts.
+    acceptance_criteria:
+      - Release contains OpenAPI + manifest
+    tests: []
+    dependencies: [T10, T1b]
+    risk_notes:
+      - Out-of-sync schema; add contract tests
+    # Refs: §F, §H
+
+  - id: T31
+    milestone: hardening_and_release
+    title: CD – Docker build & publish
+    path: .github/workflows/docker-publish.yml
+    description: Build Docker images api and etl; tag v{season}.{week}.{build}; push to registry.
+    acceptance_criteria:
+      - Images published; tags visible
+    tests: []
+    dependencies: [T10, T1]
+    risk_notes:
+      - Tag collisions; enforce semver guard
+    # Refs: §H
+
+env_secrets:
+  - id: T32
+    milestone: hardening_and_release
+    title: Env example & runtime validation
+    path: ops/env/.env.example
+    description: Define required envs (REDIS_URL, DATA_ROOT, CORS_ORIGINS, API_KEYS_STORE, etc.) + pydantic validation on startup.
+    acceptance_criteria:
+      - Missing/invalid envs fail fast with clear error
+    tests:
+      - Unit tests for config parser
+    dependencies: [T10, T11]
+    risk_notes:
+      - Sensitive values in logs—mask secrets
+    # Refs: §H
+
+deploy:
+  - id: T33
+    milestone: hardening_and_release
+    title: Local Docker Compose (api + redis + volumes)
+    path: docker/compose.yaml
+    description: Compose stack for dev/stage; mount data volume for Parquet; healthchecks wired.
+    acceptance_criteria:
+      - `docker compose up` serves /health; Redis reachable
+    tests: []
+    dependencies: [T10, T11, T23]
+    risk_notes:
+      - File permissions on volumes (Windows/Mac)
+    # Refs: §H
+
+# ────────────────────────────────────────────────────────────────────────────────
+# GOVERNANCE DOCS & UI ABOUT
+# ────────────────────────────────────────────────────────────────────────────────
+governance_docs:
+  - id: T26
+    milestone: hardening_and_release
+    title: Snapshot manifest & “About Data” modal
+    path: data/snapshots/manifest.json; ui/components/AboutDataModal.tsx
+    description: Manifest with version, build time, git SHA; UI modal displays freshness and citation string.
+    acceptance_criteria:
+      - Modal shows correct version; linkable from UI footer
+    tests:
+      - E2E assertion modal reflects latest promoted version
+    dependencies: [T7, T17, T1b]
+    risk_notes:
+      - Misleading freshness undermines trust
+    # Refs: §H
+
+  - id: T38
+    milestone: hardening_and_release
+    title: SECURITY & RATE_LIMITS docs
+    path: SECURITY.md; RATE_LIMITS.md
+    description: Document threat model, auth options, CORS policy, token bucket settings, and API key rotation policy.
+    acceptance_criteria:
+      - Docs referenced in PRs touching security
+    tests: []
+    dependencies: [T25]
+    risk_notes:
+      - Docs drift; link into CI check
+    # Refs: §H
+
+# ────────────────────────────────────────────────────────────────────────────────
+# QUALITY GATES & A11y/i18n
+# ────────────────────────────────────────────────────────────────────────────────
+quality_gates:
+  - id: T27
+    milestone: hardening_and_release
+    title: Validation suite thresholds & CI gates
+    path: etl/validation/checks_teamweek.py; .github/workflows/*
+    description: Fail CI if validations fail or coverage < thresholds; attach artifacts (OpenAPI, manifest) to releases.
+    acceptance_criteria:
+      - CI blocks merge on failing checks; artifacts published
+    tests:
+      - Pipeline simulation with failing completeness check
+    dependencies: [T7, T10, T22]
+    risk_notes:
+      - Flaky tests cause deploy friction—stabilize fixtures
+    # Refs: §H
+
+  - id: T28
+    milestone: hardening_and_release
+    title: A11y & i18n baseline audits
+    path: ui/
+    description: Run axe/lighthouse checks; ensure EN/PL strings externalized; colorblind mode semantics for direction.
+    acceptance_criteria:
+      - No critical a11y violations; EN/PL parity on key screens
+    tests:
+      - Automated axe; snapshot locales coverage
+    dependencies: [T17, T18, T19, T20, T21]
+    risk_notes:
+      - Translated strings may overflow; responsive layouts needed
+    # Refs: §G
+
+  - id: T36
+    milestone: mvp_ui
+    title: Locales setup & extraction
+    path: ui/locales/
+    description: Establish en/ and pl/ JSON namespaces; extract hardcoded strings from key views (metrics, edges, trends, model builder).
+    acceptance_criteria:
+      - 90% string coverage on MVP screens
+    tests:
+      - Snapshot tests for locale presence
+    dependencies: [T17, T18, T19, T20, T21]
+    risk_notes:
+      - Inconsistent keys; define naming convention
+    # Refs: §G
+
+  - id: T39
+    milestone: hardening_and_release
+    title: Performance budgets & profiling
+    path: observability/perf/
+    description: Define p95 budgets per endpoint; add middleware timing + simple profiler, docs how to reproduce locally.
+    acceptance_criteria:
+      - Budgets documented; failing route flagged in CI
+    tests: []
+    dependencies: [T10, T11, T29]
+    risk_notes:
+      - CI noise; isolate perf tests by label
+    # Refs: §H
+
+# ────────────────────────────────────────────────────────────────────────────────
+# SECURITY – KEY ROTATION (optional but recommended)
+# ────────────────────────────────────────────────────────────────────────────────
+security_ops:
+  - id: T40
+    milestone: hardening_and_release
+    title: API key storage & rotation job
+    path: ops/keys/rotation_job.py
+    description: Store keys in file/kv; scheduled rotation + audit log; deny expired keys at gateway middleware.
+    acceptance_criteria:
+      - Rotation interval configurable; audit log persisted
+    tests:
+      - Expired key blocked; new key accepted
+    dependencies: [T25, T32]
+    risk_notes:
+      - Clock skew; add small grace window
+    # Refs: §H
+
+# ────────────────────────────────────────────────────────────────────────────────
+# NOTES
+# ────────────────────────────────────────────────────────────────────────────────
+notes:
+  - All tasks must reference blueprint sections in PR description and update ADRs for material changes in storage, normalization, caching, or orchestration.
+    # Refs: Appendices C

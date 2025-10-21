@@ -10,6 +10,9 @@ from utils import (
     confidence_badge, detail_md_path, equal_names,
     parse_analysis_sections, TAB_TITLES   # <-- parser wklejki + tytuły zakładek
 )
+from analysis.utils_hidden_trends import (
+    load_hidden_trends, compute_hidden_trends_edges, HIDDEN_TREND_COLS
+)
 
 # ============== USTAWIENIA STRONY ==============
 st.set_page_config(
@@ -118,6 +121,15 @@ def load_csv_2024():
     # normalizacja nazw: lower + underscores
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     return df
+
+@st.cache_data(show_spinner=False)
+def load_hidden_trends_df():
+    base = Path(".")
+    try:
+        return load_hidden_trends(SEASON, base)
+    except Exception as e:
+        st.warning(f"Hidden Trends CSV not loaded: {e}")
+        return None
 
 # ============== LOGIKA DANYCH (status) ==============
 st.subheader("Week Analysis – Data status")
@@ -249,7 +261,7 @@ def render_analysis_view(row: dict, game_obj):
     sections_from_paste = parse_analysis_sections(paste) if (use_paste and paste.strip()) else None
 
     # === TABS (7 zakładek, stałe tytuły) ===
-    t1, t2, t3, t4, t5, t6, t7 = st.tabs(TAB_TITLES)
+    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs(TAB_TITLES)
 
     # ---- 1) Profil drużyn [2024 → 2025] ----
     with t1:
@@ -377,7 +389,87 @@ def render_analysis_view(row: dict, game_obj):
                 st.markdown(f"- **Confidence:** {badge}", unsafe_allow_html=True)
             else:
                 st.info("Brak sygnałów końcowych w JSON (side/total/confidence).")
-            st.caption("Docelowo można tu pokazać: fair spread/total, medianę punktów, P20–P80, value vs market itp.")
+                st.caption("Docelowo można tu pokazać: fair spread/total, medianę punktów, P20–P80, value vs market itp.")
+
+    # ---- 8) Hidden Trends (micro-edges) ----
+    with t8:
+        # Prefer JSON if present, else compute from CSV on the fly
+        meta = getattr(game_obj, "hidden_trends_meta", None)
+        labels = meta.labels if (meta and getattr(meta, "labels", None)) else {
+            "game_rhythm_q4": "Q4 Game Rhythm",
+            "play_call_entropy_neutral": "Neutral Entropy",
+            "neutral_pass_rate": "Neutral Pass Rate",
+            "neutral_plays": "Neutral Plays",
+            "drive_momentum_3plus": "Sustained Drives (>=3)",
+            "drives_with_3plus": "Drives with >=3",
+            "drives_total": "Total Drives",
+            "field_flip_eff": "Field Flip Efficiency",
+            "punts_tracked": "Punts Tracked",
+        }
+        tooltips = meta.tooltips if (meta and getattr(meta, "tooltips", None)) else {
+            "game_rhythm_q4": "Tempo/rytm w Q4 – lepsze zamykanie meczów.",
+            "field_flip_eff": "Zdolność do przesuwania pozycji startowej boiska.",
+        }
+
+        ht_df = load_hidden_trends_df()
+        data_json = getattr(game_obj, "hidden_trends", None)
+        edges_json = getattr(game_obj, "hidden_trends_edges", None)
+
+        if data_json and edges_json:
+            home_vals = data_json.get("home", {})
+            away_vals = data_json.get("away", {})
+            deltas = edges_json
+        elif ht_df is not None:
+            home_abbr = row.get("home_abbr")
+            away_abbr = row.get("away_abbr")
+            comp = compute_hidden_trends_edges(ht_df, home_abbr, away_abbr)
+            home_vals = comp["home"]
+            away_vals = comp["away"]
+            deltas = comp["edges"]
+        else:
+            st.info("No Hidden Trends available.")
+            home_vals, away_vals, deltas = {}, {}, {}
+
+        # Build UI table rows
+        rows = []
+        for k in HIDDEN_TREND_COLS:
+            hv = home_vals.get(k)
+            av = away_vals.get(k)
+            dv = deltas.get(k)
+            # Directional emoji
+            if dv is None:
+                arrow = "≈"
+            else:
+                arrow = "↑" if dv > 0 else ("↓" if dv < 0 else "≈")
+            label = labels.get(k, k)
+            rows.append({
+                "Metric": label,
+                "Home": hv,
+                "Away": av,
+                "Δ (H–A)": dv,
+                "Dir": arrow,
+            })
+
+        # Find top-3 absolute diffs to mark
+        top3 = sorted(
+            [(r["Metric"], abs(r["Δ (H–A)"]) if r["Δ (H–A)"] is not None else -1) for r in rows],
+            key=lambda t: t[1], reverse=True
+        )[:3]
+        top_names = {name for name, v in top3 if v is not None and v >= 0}
+        for r in rows:
+            if r["Metric"] in top_names:
+                r["Δ (H–A)"] = r["Δ (H–A)"] if r["Δ (H–A)"] is None else float(r["Δ (H–A)"])
+                r["Edge"] = "🏷️ Edge"
+            else:
+                r["Edge"] = ""
+
+        st.markdown("#### Hidden Trends (micro-edges)")
+        st.caption("HOME vs AWAY with Δ = HOME – AWAY. Icons: ↑ Home edge, ↓ Away edge, ≈ small/none.")
+        st.dataframe(rows, hide_index=True, use_container_width=True)
+        if tooltips:
+            st.caption("Tooltips:")
+            for k, tip in tooltips.items():
+                st.markdown(f"- **{labels.get(k, k)}**: {tip}")
 
     # Dolny przycisk powrotu
     st.markdown("<br><hr><br>", unsafe_allow_html=True)

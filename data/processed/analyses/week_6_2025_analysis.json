@@ -7,10 +7,37 @@
       "home": "Cincinnati Bengals",
       "away": "Pittsburgh Steelers",
       "kickoff": "2025-10-19T18:00:00Z",
-      "signals": { "side": "CIN -3.5", "total": "Over 46.0", "confidence": 0.57 },
+      "signals": {
+        "side": "CIN -3.5",
+        "total": "Over 46.0",
+        "confidence": 0.57
+      },
       "edges": [
-        { "name": "Hidden Yards Advantage", "team": "PIT", "value": 0.18 },
-        { "name": "3rd Down Defense", "team": "PIT", "value": 0.30 }
+        {
+          "name": "Hidden Yards Advantage",
+          "team": "PIT",
+          "value": 0.18
+        },
+        {
+          "name": "3rd Down Defense",
+          "team": "PIT",
+          "value": 0.3
+        },
+        {
+          "name": "Hidden: drives_total",
+          "team": "CIN",
+          "value": 17.0
+        },
+        {
+          "name": "Hidden: punts_tracked",
+          "team": "CIN",
+          "value": 13.0
+        },
+        {
+          "name": "Hidden: neutral_plays",
+          "team": "PIT",
+          "value": -8.0
+        }
       ],
       "risks": [
         "Explosive variance due to big plays",
@@ -19,15 +46,93 @@
       "why": [
         "Bengals hold better RZ conversion rate",
         "Steelers defense thrives on hidden yards and field position"
-      ]
+      ],
+      "hidden_trends": {
+        "home": {
+          "game_rhythm_q4": 3.20907603615628,
+          "play_call_entropy_neutral": 0.9794662187017298,
+          "neutral_pass_rate": 0.5841584158415841,
+          "neutral_plays": 101.0,
+          "drive_momentum_3plus": 0.171875,
+          "drives_with_3plus": 11.0,
+          "drives_total": 64.0,
+          "field_flip_eff": 7.555555555555555,
+          "punts_tracked": 27.0
+        },
+        "away": {
+          "game_rhythm_q4": 2.168674732019428,
+          "play_call_entropy_neutral": 0.9970229471810964,
+          "neutral_pass_rate": 0.5321100917431193,
+          "neutral_plays": 109.0,
+          "drive_momentum_3plus": 0.2127659574468085,
+          "drives_with_3plus": 10.0,
+          "drives_total": 47.0,
+          "field_flip_eff": 12.142857142857142,
+          "punts_tracked": 14.0
+        }
+      },
+      "hidden_trends_edges": {
+        "game_rhythm_q4": 1.0404013041368518,
+        "play_call_entropy_neutral": -0.017556728479366623,
+        "neutral_pass_rate": 0.05204832409846483,
+        "neutral_plays": -8.0,
+        "drive_momentum_3plus": -0.04089095744680851,
+        "drives_with_3plus": 1.0,
+        "drives_total": 17.0,
+        "field_flip_eff": -4.587301587301587,
+        "punts_tracked": 13.0
+      },
+      "hidden_trends_meta": {
+        "labels": {
+          "game_rhythm_q4": "Q4 Game Rhythm",
+          "play_call_entropy_neutral": "Neutral Entropy",
+          "neutral_pass_rate": "Neutral Pass Rate",
+          "neutral_plays": "Neutral Plays",
+          "drive_momentum_3plus": "Sustained Drives (>=3)",
+          "drives_with_3plus": "Drives with >=3",
+          "drives_total": "Total Drives",
+          "field_flip_eff": "Field Flip Efficiency",
+          "punts_tracked": "Punts Tracked"
+        },
+        "tooltips": {
+          "game_rhythm_q4": "Tempo/rytm w Q4 – lepsze zamykanie meczów.",
+          "play_call_entropy_neutral": "Entropia play-call w neutralnych sytuacjach – trudniejsza do przewidzenia ofensywa.",
+          "neutral_pass_rate": "% podań w neutralnych sytuacjach – wyższe = agresywniejsza gra po powietrzu.",
+          "field_flip_eff": "Zdolność do odwracania pozycji na boisku po puncie.",
+          "drive_momentum_3plus": "Odsetek drivów z ≥3 kolejnymi udanymi akcjami."
+        }
+      }
     },
     {
       "home": "Arizona Cardinals",
       "away": "Green Bay Packers",
       "kickoff": "2025-10-19T20:25:00Z",
-      "signals": { "side": "ARI +6.5", "total": "Over 44.0", "confidence": 0.55 },
+      "signals": {
+        "side": "ARI +6.5",
+        "total": "Over 44.0",
+        "confidence": 0.55
+      },
       "edges": [
-        { "name": "Explosive Runs", "team": "ARI", "value": 0.09 }
+        {
+          "name": "Explosive Runs",
+          "team": "ARI",
+          "value": 0.09
+        },
+        {
+          "name": "Hidden: drives_total",
+          "team": "ARI",
+          "value": 12.0
+        },
+        {
+          "name": "Hidden: neutral_plays",
+          "team": "ARI",
+          "value": 11.0
+        },
+        {
+          "name": "Hidden: punts_tracked",
+          "team": "ARI",
+          "value": 9.0
+        }
       ],
       "risks": [
         "QB inconsistency",
@@ -36,7 +141,62 @@
       "why": [
         "Speed advantage vs GB linebackers",
         "Matchup fits for WR screens"
-      ]
+      ],
+      "hidden_trends": {
+        "home": {
+          "game_rhythm_q4": 2.774252059080565,
+          "play_call_entropy_neutral": 0.9605187074766162,
+          "neutral_pass_rate": 0.6164383561643836,
+          "neutral_plays": 146.0,
+          "drive_momentum_3plus": 0.1525423728813559,
+          "drives_with_3plus": 9.0,
+          "drives_total": 59.0,
+          "field_flip_eff": 8.0,
+          "punts_tracked": 22.0
+        },
+        "away": {
+          "game_rhythm_q4": 2.5563908796806287,
+          "play_call_entropy_neutral": 0.999960419527173,
+          "neutral_pass_rate": 0.4962962962962963,
+          "neutral_plays": 135.0,
+          "drive_momentum_3plus": 0.2553191489361702,
+          "drives_with_3plus": 12.0,
+          "drives_total": 47.0,
+          "field_flip_eff": 11.692307692307692,
+          "punts_tracked": 13.0
+        }
+      },
+      "hidden_trends_edges": {
+        "game_rhythm_q4": 0.21786117939993632,
+        "play_call_entropy_neutral": -0.0394417120505568,
+        "neutral_pass_rate": 0.12014205986808729,
+        "neutral_plays": 11.0,
+        "drive_momentum_3plus": -0.1027767760548143,
+        "drives_with_3plus": -3.0,
+        "drives_total": 12.0,
+        "field_flip_eff": -3.6923076923076916,
+        "punts_tracked": 9.0
+      },
+      "hidden_trends_meta": {
+        "labels": {
+          "game_rhythm_q4": "Q4 Game Rhythm",
+          "play_call_entropy_neutral": "Neutral Entropy",
+          "neutral_pass_rate": "Neutral Pass Rate",
+          "neutral_plays": "Neutral Plays",
+          "drive_momentum_3plus": "Sustained Drives (>=3)",
+          "drives_with_3plus": "Drives with >=3",
+          "drives_total": "Total Drives",
+          "field_flip_eff": "Field Flip Efficiency",
+          "punts_tracked": "Punts Tracked"
+        },
+        "tooltips": {
+          "game_rhythm_q4": "Tempo/rytm w Q4 – lepsze zamykanie meczów.",
+          "play_call_entropy_neutral": "Entropia play-call w neutralnych sytuacjach – trudniejsza do przewidzenia ofensywa.",
+          "neutral_pass_rate": "% podań w neutralnych sytuacjach – wyższe = agresywniejsza gra po powietrzu.",
+          "field_flip_eff": "Zdolność do odwracania pozycji na boisku po puncie.",
+          "drive_momentum_3plus": "Odsetek drivów z ≥3 kolejnymi udanymi akcjami."
+        }
+      }
     }
   ]
 }
